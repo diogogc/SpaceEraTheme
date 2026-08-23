@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "spaceera.iss-tracker",
   "name": "Space Era ISS Tracker",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "diogo carvalho",
   "license": "CC-BY-4.0",
   "description": "Console-style live ISS tracker for the Omarchy bar.",
