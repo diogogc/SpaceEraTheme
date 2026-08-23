@@ -96,4 +96,4 @@ The Mission Control background is based on official NASA imagery. Space Era's th
 
 ## License
 
-Released under the Space Era Attribution License. You may use, modify, and share it, but public use or redistribution must credit **diogo carvalho** as the original creator.
+Released under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**. You may use, modify, and share it, but you must give appropriate credit to **diogo carvalho**.

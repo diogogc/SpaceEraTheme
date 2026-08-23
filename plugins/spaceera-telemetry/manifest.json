@@ -4,7 +4,7 @@
   "name": "Space Era Telemetry",
   "version": "0.1.0",
   "author": "diogo carvalho",
-  "license": "Space Era Attribution License",
+  "license": "CC-BY-4.0",
   "description": "Apollo-inspired Space Era system telemetry gauges for the Omarchy bar.",
   "kinds": [
     "bar-widget"
