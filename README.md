@@ -20,6 +20,18 @@ It is not a landing page. It is the cockpit.
   - flashing `ACQUIRED` bar state when the ISS is in range
 - High-resolution NASA Mission Control background.
 
+## Screenshots
+
+![Space Era Mission Control background](screenshots/theme-03-mission-control.png)
+
+![Space Era Meatball background](screenshots/theme-01-meatball.png)
+
+![Space Era Worm background](screenshots/theme-02-worm.png)
+
+![Space Era ISS tracker](screenshots/plugin-iss-tracker.png)
+
+![Space Era telemetry](screenshots/plugin-telemetry.png)
+
 ## Install
 
 Clone or copy this repository into your Omarchy themes directory:
