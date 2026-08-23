@@ -19,7 +19,6 @@ It is not a landing page. It is the cockpit.
   - next pass countdown and duration
   - flashing `ACQUIRED` bar state when the ISS is in range
 - High-resolution NASA Mission Control background.
-- Theme package excludes `visual_ref/` and `skills/`.
 
 ## Install
 
