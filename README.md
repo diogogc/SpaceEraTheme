@@ -34,23 +34,22 @@ It is not a landing page. It is the cockpit.
 
 ## Install
 
-Clone or copy this repository into your Omarchy themes directory:
+Install the theme directly from GitHub:
 
 ```bash
-mkdir -p ~/.config/omarchy/themes
-cp -a SpaceEraTheme ~/.config/omarchy/themes/space-era
+omarchy theme install https://github.com/diogogc/SpaceEraTheme.git
 omarchy theme set "Space Era"
 ```
 
-Install the bundled plugins:
+Then install the bundled console plugins:
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins
-cp -a ~/.config/omarchy/themes/space-era/plugins/spaceera-telemetry ~/.config/omarchy/plugins/spaceera.telemetry
 cp -a ~/.config/omarchy/themes/space-era/plugins/spaceera-iss-tracker ~/.config/omarchy/plugins/spaceera.iss-tracker
+cp -a ~/.config/omarchy/themes/space-era/plugins/spaceera-telemetry ~/.config/omarchy/plugins/spaceera.telemetry
 ```
 
-Add the widgets to your Omarchy bar configuration if they are not already present:
+Add the widgets to your Omarchy bar configuration if they are not already present in `~/.config/omarchy/shell.json`:
 
 ```json
 {
@@ -69,6 +68,16 @@ Omarchy usually hot-reloads local plugins. If needed, restart the shell:
 
 ```bash
 omarchy restart shell
+```
+
+The plugins use standard command-line tools available on a typical Omarchy system: `bash`, `curl`, `jq`, and `python3`.
+
+## Standalone ISS Tracker
+
+The ISS tracker plugin is also available as its own repository:
+
+```bash
+git clone https://github.com/diogogc/spaceera-iss-tracker.git ~/.config/omarchy/plugins/spaceera.iss-tracker
 ```
 
 ## ISS Tracker Usage
