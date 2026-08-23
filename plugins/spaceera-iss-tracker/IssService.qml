@@ -163,12 +163,19 @@ Item {
   }
 
   property string _statusBuf: ""
+  readonly property int maxStatusChars: 131072
 
   Process {
     id: statusProc
     stdout: SplitParser {
       onRead: function(line) {
-        root._statusBuf += line + "\n"
+        if (root._statusBuf.length >= root.maxStatusChars)
+          return
+
+        var next = root._statusBuf + line + "\n"
+        root._statusBuf = next.length > root.maxStatusChars
+          ? next.slice(0, root.maxStatusChars)
+          : next
       }
     }
     onRunningChanged: {

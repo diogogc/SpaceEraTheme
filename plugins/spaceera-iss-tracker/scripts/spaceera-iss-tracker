@@ -16,9 +16,36 @@ config_base="${XDG_CONFIG_HOME:-$HOME/.config}"
 config_dir="$config_base/spaceera"
 config_file="$config_dir/iss-location.json"
 api_url="https://api.wheretheiss.at/v1/satellites/25544"
+max_response_bytes=65536
+max_stdout_bytes=131072
+max_future_points=721
+max_orbit_points=19
 
 empty_location='{"configured":false,"city":"","latitude":0,"longitude":0}'
 empty_pass='{"available":false,"current":false,"start":0,"end":0,"closest":0,"countdown":0,"duration":0,"min_distance_km":0,"radius_km":0,"horizon_hours":24}'
+
+fetch_json() {
+  local url="$1"
+  local timeout="${2:-5}"
+  curl -fsSL --max-time "$timeout" --max-filesize "$max_response_bytes" "$url" 2>/dev/null || true
+}
+
+emit_json() {
+  local payload="$1"
+  if ((${#payload} > max_stdout_bytes)); then
+    printf '%s\n' '{"ok":false,"error":"output too large"}'
+    return 1
+  fi
+  printf '%s\n' "$payload"
+}
+
+file_within_limit() {
+  local path="$1"
+  [[ -r "$path" ]] || return 1
+  local size
+  size=$(wc -c < "$path" 2>/dev/null || printf '%s' 0)
+  ((size <= max_stdout_bytes))
+}
 
 read_location() {
   if [[ -r "$config_file" ]]; then
@@ -37,8 +64,13 @@ with_location() {
   local input="$1"
   local loc
   local next_pass="${2:-$empty_pass}"
+  local payload
   loc="$(read_location)"
-  jq -c --argjson user_location "$loc" --argjson next_pass "$next_pass" '. + {user_location: $user_location, next_pass: $next_pass}' <<<"$input"
+  payload="$(jq -c --argjson user_location "$loc" --argjson next_pass "$next_pass" '
+    .orbit = ((.orbit // [])[0:19])
+    | . + {user_location: $user_location, next_pass: $next_pass}
+  ' <<<"$input")"
+  emit_json "$payload"
 }
 
 predict_next_pass() {
@@ -54,7 +86,7 @@ predict_next_pass() {
 
   local now
   now="$(date +%s)"
-  if [[ -r "$pass_cache_file" ]] && jq -e --argjson loc "$loc" --argjson now "$now" '
+  if file_within_limit "$pass_cache_file" && jq -e --argjson loc "$loc" --argjson now "$now" '
     (.generated_at // 0) + 600 > $now
     and (.user_location.latitude == $loc.latitude)
     and (.user_location.longitude == $loc.longitude)
@@ -82,13 +114,19 @@ predict_next_pass() {
     done
 
     local chunk=""
-    chunk=$(curl -fsSL --max-time 5 "$api_url/positions?timestamps=$timestamps" 2>/dev/null || true)
+    chunk=$(fetch_json "$api_url/positions?timestamps=$timestamps" 5)
     if [[ -n "$chunk" ]] && jq -e 'type == "array"' >/dev/null 2>&1 <<<"$chunk"; then
-      future=$(jq -cs '.[0] + .[1]' <(printf '%s\n' "$future") <(printf '%s\n' "$chunk"))
+      future=$(jq -cs --argjson max_points "$max_future_points" '
+        (.[0] + (.[1][0:30] | map({
+          latitude: ((.latitude // 0) | tonumber),
+          longitude: ((.longitude // 0) | tonumber),
+          timestamp: ((.timestamp // 0) | tonumber)
+        })))[:$max_points]
+      ' <(printf '%s\n' "$future") <(printf '%s\n' "$chunk"))
     fi
   done
 
-  printf '%s\n' "$future" > "$future_file"
+  jq -c --argjson max_points "$max_future_points" '.[:$max_points]' <<<"$future" > "$future_file"
 
   local pass
   pass=$(python3 - "$loc" "$future_file" "$timestamp" "$altitude" <<'PY'
@@ -206,7 +244,7 @@ if [[ "${1:-}" == "--set-city" ]]; then
   encoded="$(jq -rn --arg v "$city" '$v|@uri')"
   geo_raw=""
   if command -v curl >/dev/null 2>&1; then
-    geo_raw=$(curl -fsSL --max-time 6 "https://geocoding-api.open-meteo.com/v1/search?name=$encoded&count=1&language=en&format=json" 2>/dev/null || true)
+    geo_raw=$(fetch_json "https://geocoding-api.open-meteo.com/v1/search?name=$encoded&count=1&language=en&format=json" 6)
   fi
 
   if [[ -z "$geo_raw" ]] || ! jq -e '.results[0].latitude and .results[0].longitude' >/dev/null 2>&1 <<<"$geo_raw"; then
@@ -225,7 +263,7 @@ fi
 
 raw=""
 if command -v curl >/dev/null 2>&1; then
-  raw=$(curl -fsSL --max-time 4 "$api_url" 2>/dev/null || true)
+  raw=$(fetch_json "$api_url" 4)
 fi
 
 if [[ -n "$raw" ]] && jq -e '.latitude and .longitude and .timestamp' >/dev/null 2>&1 <<<"$raw"; then
@@ -240,11 +278,11 @@ if [[ -n "$raw" ]] && jq -e '.latitude and .longitude and .timestamp' >/dev/null
 
   orbit_raw=""
   if command -v curl >/dev/null 2>&1; then
-    orbit_raw=$(curl -fsSL --max-time 4 "$api_url/positions?timestamps=$timestamps" 2>/dev/null || true)
+    orbit_raw=$(fetch_json "$api_url/positions?timestamps=$timestamps" 4)
   fi
 
   if [[ -n "$orbit_raw" ]] && jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<<"$orbit_raw"; then
-    orbit=$(jq -c '[.[] | {latitude: (.latitude | tonumber), longitude: (.longitude | tonumber), timestamp: (.timestamp | tonumber)}]' <<<"$orbit_raw")
+    orbit=$(jq -c --argjson max_points "$max_orbit_points" '[.[:$max_points][] | {latitude: (.latitude | tonumber), longitude: (.longitude | tonumber), timestamp: (.timestamp | tonumber)}]' <<<"$orbit_raw")
   else
     orbit="[]"
   fi
@@ -266,7 +304,7 @@ if [[ -n "$raw" ]] && jq -e '.latitude and .longitude and .timestamp' >/dev/null
   exit 0
 fi
 
-if [[ -r "$cache_file" ]]; then
+if file_within_limit "$cache_file"; then
   cached_payload="$(jq -c '. + {cached: true}' "$cache_file")"
   cached_timestamp="$(jq -r '((.timestamp // 0) | tonumber | floor)' <<<"$cached_payload")"
   cached_altitude="$(jq -r '((.altitude // 420) | tonumber)' <<<"$cached_payload")"
