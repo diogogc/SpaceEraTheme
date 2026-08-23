@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "spaceera.telemetry",
+  "name": "Space Era Telemetry",
+  "version": "0.1.0",
+  "author": "diogo carvalho",
+  "license": "Space Era Attribution License",
+  "description": "Apollo-inspired Space Era system telemetry gauges for the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Space Era Telemetry",
+    "description": "Show CPU, memory, and temperature in Apollo-style needle gauges.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

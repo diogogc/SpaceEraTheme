@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "spaceera.iss-tracker",
+  "name": "Space Era ISS Tracker",
+  "version": "0.1.0",
+  "author": "diogo carvalho",
+  "license": "Space Era Attribution License",
+  "description": "Console-style live ISS tracker for the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "ISS Tracker",
+    "description": "Show the ISS position on a console-style world map.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

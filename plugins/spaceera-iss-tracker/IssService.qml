@@ -1,0 +1,184 @@
+import QtQuick
+import Quickshell.Io
+
+Item {
+  id: root
+
+  property string scriptPath: Qt.resolvedUrl("scripts/spaceera-iss-tracker").toString().replace("file://", "")
+
+  property bool ok: false
+  property bool cached: false
+  property real latitude: 0
+  property real longitude: 0
+  property real altitude: 0
+  property real velocity: 0
+  property string visibility: "offline"
+  property int timestamp: 0
+  property var orbit: []
+  property bool userLocationConfigured: false
+  property string userCity: ""
+  property real userLatitude: 0
+  property real userLongitude: 0
+  property real distanceToUserKm: 0
+  readonly property real earthRadiusKm: 6371
+  readonly property real visibilityRadiusKm: altitude > 0 ? earthRadiusKm * Math.acos(earthRadiusKm / (earthRadiusKm + altitude)) : 0
+  readonly property bool issVisibleFromUser: ok && userLocationConfigured && distanceToUserKm <= visibilityRadiusKm
+  property string lastError: ""
+  property string cityStatus: ""
+  property bool settingCity: false
+  property var nextPass: ({available: false})
+  property int nowSeconds: Math.floor(Date.now() / 1000)
+  readonly property bool nextPassAvailable: nextPass && nextPass.available === true
+  readonly property int nextPassStart: nextPassAvailable ? Number(nextPass.start) || 0 : 0
+  readonly property int nextPassEnd: nextPassAvailable ? Number(nextPass.end) || 0 : 0
+  readonly property int nextPassCountdown: nextPassAvailable ? Math.max(0, nextPassStart - nowSeconds) : 0
+  readonly property int nextPassDuration: nextPassAvailable ? Math.max(0, Number(nextPass.duration) || (nextPassEnd - nextPassStart)) : 0
+  readonly property int nextPassMinDistanceKm: nextPassAvailable ? Math.round(Number(nextPass.min_distance_km) || 0) : 0
+
+  readonly property string summary: ok
+    ? ("ISS " + formatCoord(latitude, "N", "S") + " " + formatCoord(longitude, "E", "W") + (issVisibleFromUser ? " VISIBLE" : ""))
+    : "ISS SIGNAL LOST"
+
+  function formatCoord(value, positive, negative) {
+    var n = Number(value) || 0
+    var hemi = n >= 0 ? positive : negative
+    return Math.abs(n).toFixed(1) + hemi
+  }
+
+  function formatDuration(seconds) {
+    var total = Math.max(0, Math.round(Number(seconds) || 0))
+    var hours = Math.floor(total / 3600)
+    var minutes = Math.floor((total % 3600) / 60)
+    if (hours > 0) return hours + "H " + twoDigits(minutes) + "M"
+    return minutes + "M"
+  }
+
+  function twoDigits(value) {
+    var n = Math.max(0, Math.round(Number(value) || 0))
+    return n < 10 ? "0" + n : String(n)
+  }
+
+  function formatClock(timestamp) {
+    var stamp = Number(timestamp) || 0
+    if (stamp <= 0) return "--:--"
+    var d = new Date(stamp * 1000)
+    return twoDigits(d.getHours()) + ":" + twoDigits(d.getMinutes())
+  }
+
+  function refresh() {
+    if (statusProc.running) return
+    statusProc.command = [scriptPath]
+    statusProc.running = true
+  }
+
+  function setCity(city) {
+    var cleaned = String(city || "").trim()
+    if (cleaned.length === 0) {
+      cityStatus = "ENTER CITY"
+      return
+    }
+    if (statusProc.running) return
+    cityStatus = "LOCATING..."
+    settingCity = true
+    statusProc.command = [scriptPath, "--set-city", cleaned]
+    statusProc.running = true
+  }
+
+  function clearCity() {
+    if (statusProc.running) return
+    cityStatus = "CLEARING..."
+    settingCity = true
+    statusProc.command = [scriptPath, "--clear-city"]
+    statusProc.running = true
+  }
+
+  function toRad(deg) {
+    return deg * Math.PI / 180
+  }
+
+  function updateDistance() {
+    if (!userLocationConfigured) {
+      distanceToUserKm = 0
+      return
+    }
+
+    var lat1 = toRad(latitude)
+    var lat2 = toRad(userLatitude)
+    var dLat = toRad(userLatitude - latitude)
+    var dLon = toRad(userLongitude - longitude)
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+      + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    distanceToUserKm = earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  }
+
+  function parseStatus(raw) {
+    try {
+      var data = JSON.parse(String(raw || "{}"))
+      root.ok = data.ok === true
+      root.cached = data.cached === true
+      root.latitude = Number(data.latitude) || 0
+      root.longitude = Number(data.longitude) || 0
+      root.altitude = Number(data.altitude) || 0
+      root.velocity = Number(data.velocity) || 0
+      root.visibility = String(data.visibility || "unknown")
+      root.timestamp = Number(data.timestamp) || 0
+      root.orbit = Array.isArray(data.orbit) ? data.orbit : []
+      root.nextPass = data.next_pass || ({available: false})
+      var location = data.user_location || {}
+      root.userLocationConfigured = location.configured === true
+      root.userCity = String(location.city || "")
+      root.userLatitude = Number(location.latitude) || 0
+      root.userLongitude = Number(location.longitude) || 0
+      root.updateDistance()
+      root.lastError = root.ok ? "" : "ISS signal unavailable"
+      root.cityStatus = root.settingCity
+        ? (root.userLocationConfigured ? "LOCKED " + root.userCity.toUpperCase() : String(data.error || "CITY NOT FOUND").toUpperCase())
+        : root.cityStatus
+    } catch (e) {
+      root.ok = false
+      root.lastError = "ISS parse error"
+      console.warn("Space Era ISS tracker parse error: " + e)
+    } finally {
+      root.settingCity = false
+    }
+  }
+
+  onLatitudeChanged: updateDistance()
+  onLongitudeChanged: updateDistance()
+  onUserLatitudeChanged: updateDistance()
+  onUserLongitudeChanged: updateDistance()
+
+  Timer {
+    interval: 30000
+    running: true
+    repeat: true
+    onTriggered: root.refresh()
+  }
+
+  Timer {
+    interval: 1000
+    running: true
+    repeat: true
+    onTriggered: root.nowSeconds = Math.floor(Date.now() / 1000)
+  }
+
+  property string _statusBuf: ""
+
+  Process {
+    id: statusProc
+    stdout: SplitParser {
+      onRead: function(line) {
+        root._statusBuf += line + "\n"
+      }
+    }
+    onRunningChanged: {
+      if (running) {
+        root._statusBuf = ""
+      } else if (root._statusBuf.trim().length > 0) {
+        root.parseStatus(root._statusBuf.trim())
+      }
+    }
+  }
+
+  Component.onCompleted: refresh()
+}

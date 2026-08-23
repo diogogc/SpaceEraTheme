@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_base="${XDG_RUNTIME_DIR:-/tmp}"
+state_dir="$state_base/omarchy-spaceera-iss-tracker"
+if ! mkdir -p "$state_dir" 2>/dev/null || ! touch "$state_dir/.write-test" 2>/dev/null; then
+  state_dir="/tmp/omarchy-spaceera-iss-tracker"
+  mkdir -p "$state_dir"
+else
+  rm -f "$state_dir/.write-test"
+fi
+
+cache_file="$state_dir/position.json"
+pass_cache_file="$state_dir/next-pass.json"
+config_base="${XDG_CONFIG_HOME:-$HOME/.config}"
+config_dir="$config_base/spaceera"
+config_file="$config_dir/iss-location.json"
+api_url="https://api.wheretheiss.at/v1/satellites/25544"
+
+empty_location='{"configured":false,"city":"","latitude":0,"longitude":0}'
+empty_pass='{"available":false,"current":false,"start":0,"end":0,"closest":0,"countdown":0,"duration":0,"min_distance_km":0,"radius_km":0,"horizon_hours":24}'
+
+read_location() {
+  if [[ -r "$config_file" ]]; then
+    jq -c '{
+      configured: (.configured == true),
+      city: (.city // ""),
+      latitude: ((.latitude // 0) | tonumber),
+      longitude: ((.longitude // 0) | tonumber)
+    }' "$config_file" 2>/dev/null || printf '%s\n' "$empty_location"
+  else
+    printf '%s\n' "$empty_location"
+  fi
+}
+
+with_location() {
+  local input="$1"
+  local loc
+  local next_pass="${2:-$empty_pass}"
+  loc="$(read_location)"
+  jq -c --argjson user_location "$loc" --argjson next_pass "$next_pass" '. + {user_location: $user_location, next_pass: $next_pass}' <<<"$input"
+}
+
+predict_next_pass() {
+  local timestamp="$1"
+  local altitude="$2"
+  local loc
+  loc="$(read_location)"
+
+  if ! jq -e '.configured == true' >/dev/null 2>&1 <<<"$loc"; then
+    printf '%s\n' "$empty_pass"
+    return
+  fi
+
+  local now
+  now="$(date +%s)"
+  if [[ -r "$pass_cache_file" ]] && jq -e --argjson loc "$loc" --argjson now "$now" '
+    (.generated_at // 0) + 600 > $now
+    and (.user_location.latitude == $loc.latitude)
+    and (.user_location.longitude == $loc.longitude)
+  ' "$pass_cache_file" >/dev/null 2>&1; then
+    jq -c '.next_pass' "$pass_cache_file"
+    return
+  fi
+
+  if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "$empty_pass"
+    return
+  fi
+
+  local future_file="$state_dir/future-positions.json"
+  local future="[]"
+  local offset=0
+  while [[ "$offset" -le 86400 ]]; do
+    local timestamps=""
+    local i=0
+    while [[ "$i" -lt 30 && "$offset" -le 86400 ]]; do
+      if [[ -n "$timestamps" ]]; then timestamps+=","; fi
+      timestamps+="$((timestamp + offset))"
+      offset=$((offset + 120))
+      i=$((i + 1))
+    done
+
+    local chunk=""
+    chunk=$(curl -fsSL --max-time 5 "$api_url/positions?timestamps=$timestamps" 2>/dev/null || true)
+    if [[ -n "$chunk" ]] && jq -e 'type == "array"' >/dev/null 2>&1 <<<"$chunk"; then
+      future=$(jq -cs '.[0] + .[1]' <(printf '%s\n' "$future") <(printf '%s\n' "$chunk"))
+    fi
+  done
+
+  printf '%s\n' "$future" > "$future_file"
+
+  local pass
+  pass=$(python3 - "$loc" "$future_file" "$timestamp" "$altitude" <<'PY'
+import json
+import math
+import sys
+
+earth_radius_km = 6371.0
+loc = json.loads(sys.argv[1])
+future_path = sys.argv[2]
+now = int(float(sys.argv[3]))
+altitude = float(sys.argv[4] or 420)
+radius = earth_radius_km * math.acos(earth_radius_km / (earth_radius_km + max(altitude, 1.0)))
+
+with open(future_path, "r", encoding="utf-8") as fh:
+    points = json.load(fh)
+
+user_lat = math.radians(float(loc["latitude"]))
+user_lon = math.radians(float(loc["longitude"]))
+
+def distance_km(point):
+    lat = math.radians(float(point.get("latitude", 0)))
+    lon = math.radians(float(point.get("longitude", 0)))
+    dlat = lat - user_lat
+    dlon = lon - user_lon
+    a = math.sin(dlat / 2) ** 2 + math.cos(user_lat) * math.cos(lat) * math.sin(dlon / 2) ** 2
+    return earth_radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1 - a)))
+
+samples = []
+for point in points:
+    try:
+        stamp = int(float(point.get("timestamp", 0)))
+        if stamp < now:
+            continue
+        dist = distance_km(point)
+    except Exception:
+        continue
+    samples.append((stamp, dist, dist <= radius))
+
+pass_info = {
+    "available": False,
+    "current": False,
+    "start": 0,
+    "end": 0,
+    "closest": 0,
+    "countdown": 0,
+    "duration": 0,
+    "min_distance_km": 0,
+    "radius_km": round(radius),
+    "horizon_hours": 24,
+}
+
+in_pass = False
+start = None
+best_stamp = None
+best_dist = None
+last_in = None
+
+for stamp, dist, inside in samples:
+    if inside and not in_pass:
+        in_pass = True
+        start = stamp
+        best_stamp = stamp
+        best_dist = dist
+        last_in = stamp
+    elif inside:
+        last_in = stamp
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_stamp = stamp
+    elif in_pass:
+        break
+
+if in_pass and start is not None:
+    end = last_in or start
+    pass_info.update({
+        "available": True,
+        "current": start <= now + 120,
+        "start": start,
+        "end": end,
+        "closest": best_stamp or start,
+        "countdown": max(0, start - now),
+        "duration": max(0, end - start),
+        "min_distance_km": round(best_dist or 0),
+    })
+
+print(json.dumps(pass_info, separators=(",", ":")))
+PY
+)
+
+  jq -cn --argjson loc "$loc" --argjson next_pass "$pass" --argjson generated_at "$now" '{
+    generated_at: $generated_at,
+    user_location: $loc,
+    next_pass: $next_pass
+  }' > "$pass_cache_file"
+
+  printf '%s\n' "$pass"
+}
+
+if [[ "${1:-}" == "--clear-city" ]]; then
+  mkdir -p "$config_dir"
+  printf '%s\n' "$empty_location" > "$config_file"
+  printf '%s\n' "$empty_pass" > "$pass_cache_file"
+  with_location "$(jq -cn '{ok:false,cached:false,latitude:0,longitude:0,altitude:0,velocity:0,visibility:"offline",timestamp:0,orbit:[]}')"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--set-city" ]]; then
+  city="${2:-}"
+  if [[ -z "${city// }" ]]; then
+    echo '{"ok":false,"error":"empty city"}'
+    exit 1
+  fi
+
+  encoded="$(jq -rn --arg v "$city" '$v|@uri')"
+  geo_raw=""
+  if command -v curl >/dev/null 2>&1; then
+    geo_raw=$(curl -fsSL --max-time 6 "https://geocoding-api.open-meteo.com/v1/search?name=$encoded&count=1&language=en&format=json" 2>/dev/null || true)
+  fi
+
+  if [[ -z "$geo_raw" ]] || ! jq -e '.results[0].latitude and .results[0].longitude' >/dev/null 2>&1 <<<"$geo_raw"; then
+    echo '{"ok":false,"error":"city not found"}'
+    exit 1
+  fi
+
+  mkdir -p "$config_dir"
+  jq -c '{
+    configured: true,
+    city: ((.results[0].name // "") + (if (.results[0].country_code // "") != "" then ", " + .results[0].country_code else "" end)),
+    latitude: (.results[0].latitude | tonumber),
+    longitude: (.results[0].longitude | tonumber)
+  }' <<<"$geo_raw" > "$config_file"
+fi
+
+raw=""
+if command -v curl >/dev/null 2>&1; then
+  raw=$(curl -fsSL --max-time 4 "$api_url" 2>/dev/null || true)
+fi
+
+if [[ -n "$raw" ]] && jq -e '.latitude and .longitude and .timestamp' >/dev/null 2>&1 <<<"$raw"; then
+  timestamp=$(jq -r '.timestamp | tonumber | floor' <<<"$raw")
+  altitude=$(jq -r '((.altitude // 420) | tonumber)' <<<"$raw")
+  timestamps=""
+  for offset in -2700 -2400 -2100 -1800 -1500 -1200 -900 -600 -300 0 300 600 900 1200 1500 1800 2100 2400 2700; do
+    stamp=$((timestamp + offset))
+    if [[ -n "$timestamps" ]]; then timestamps+=","; fi
+    timestamps+="$stamp"
+  done
+
+  orbit_raw=""
+  if command -v curl >/dev/null 2>&1; then
+    orbit_raw=$(curl -fsSL --max-time 4 "$api_url/positions?timestamps=$timestamps" 2>/dev/null || true)
+  fi
+
+  if [[ -n "$orbit_raw" ]] && jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<<"$orbit_raw"; then
+    orbit=$(jq -c '[.[] | {latitude: (.latitude | tonumber), longitude: (.longitude | tonumber), timestamp: (.timestamp | tonumber)}]' <<<"$orbit_raw")
+  else
+    orbit="[]"
+  fi
+
+  payload=$(jq -c --argjson orbit "$orbit" '{
+    ok: true,
+    cached: false,
+    latitude: (.latitude | tonumber),
+    longitude: (.longitude | tonumber),
+    altitude: ((.altitude // 0) | tonumber),
+    velocity: ((.velocity // 0) | tonumber),
+    visibility: (.visibility // "unknown"),
+    timestamp: (.timestamp | tonumber),
+    orbit: $orbit
+  }' <<<"$raw")
+  next_pass="$(predict_next_pass "$timestamp" "$altitude")"
+  printf '%s\n' "$payload" > "$cache_file"
+  with_location "$payload" "$next_pass"
+  exit 0
+fi
+
+if [[ -r "$cache_file" ]]; then
+  cached_payload="$(jq -c '. + {cached: true}' "$cache_file")"
+  cached_timestamp="$(jq -r '((.timestamp // 0) | tonumber | floor)' <<<"$cached_payload")"
+  cached_altitude="$(jq -r '((.altitude // 420) | tonumber)' <<<"$cached_payload")"
+  with_location "$cached_payload" "$(predict_next_pass "$cached_timestamp" "$cached_altitude")"
+  exit 0
+fi
+
+with_location "$(jq -cn '{
+  ok: false,
+  cached: false,
+  latitude: 0,
+  longitude: 0,
+  altitude: 0,
+  velocity: 0,
+  visibility: "offline",
+  timestamp: 0,
+  orbit: []
+}')"

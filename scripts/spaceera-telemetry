@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_base="${XDG_RUNTIME_DIR:-/tmp}"
+state_dir="$state_base/omarchy-spaceera-telemetry"
+if ! mkdir -p "$state_dir" 2>/dev/null || ! touch "$state_dir/.write-test" 2>/dev/null; then
+  state_dir="/tmp/omarchy-spaceera-telemetry"
+  mkdir -p "$state_dir"
+else
+  rm -f "$state_dir/.write-test"
+fi
+state_file="$state_dir/cpu.stat"
+
+read_temp_file() {
+  local file="$1"
+  local value
+
+  value=$(sed -n '1p' "$file" 2>/dev/null) || return 1
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  (( value >= 10000 && value <= 120000 )) || return 1
+
+  printf '%s\n' "$value"
+}
+
+read_system_temp() {
+  local hwmon name input label_file label value max_temp=0
+
+  for hwmon in /sys/class/hwmon/hwmon*; do
+    [[ -d "$hwmon" ]] || continue
+    name=$(sed -n '1p' "$hwmon/name" 2>/dev/null || true)
+    [[ "$name" == "coretemp" ]] || continue
+
+    for input in "$hwmon"/temp*_input; do
+      label_file="${input%_input}_label"
+      label=$(sed -n '1p' "$label_file" 2>/dev/null || true)
+      [[ "$label" == "Package id 0" ]] || continue
+      read_temp_file "$input" && return 0
+    done
+  done
+
+  for hwmon in /sys/class/hwmon/hwmon*; do
+    [[ -d "$hwmon" ]] || continue
+    for input in "$hwmon"/temp*_input; do
+      label_file="${input%_input}_label"
+      label=$(sed -n '1p' "$label_file" 2>/dev/null || true)
+      [[ "$label" == "CPU" ]] || continue
+      read_temp_file "$input" && return 0
+    done
+  done
+
+  for input in /sys/class/hwmon/hwmon*/temp*_input; do
+    value=$(read_temp_file "$input" 2>/dev/null || true)
+    [[ -n "$value" ]] || continue
+    (( value > max_temp )) && max_temp="$value"
+  done
+
+  (( max_temp > 0 )) && printf '%s\n' "$max_temp"
+}
+
+read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+idle_now=$((idle + iowait))
+total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
+
+cpu_percent=0
+if [[ -r "$state_file" ]]; then
+  read -r total_prev idle_prev < "$state_file" || true
+  total_delta=$((total_now - ${total_prev:-0}))
+  idle_delta=$((idle_now - ${idle_prev:-0}))
+  if (( total_delta > 0 )); then
+    cpu_percent=$(( (100 * (total_delta - idle_delta) + total_delta / 2) / total_delta ))
+  fi
+fi
+printf '%s %s\n' "$total_now" "$idle_now" > "$state_file"
+
+mem_percent=$(awk '
+  /^MemTotal:/ { total = $2 }
+  /^MemAvailable:/ { available = $2 }
+  END {
+    if (total > 0) printf "%d", ((total - available) * 100 / total) + 0.5;
+    else printf "0";
+  }
+' /proc/meminfo)
+
+load_avg=$(awk '{ print $1 }' /proc/loadavg)
+disk_percent=$(df -P / | awk 'NR == 2 { gsub("%", "", $5); print $5 }')
+temp_millic=$(read_system_temp || true)
+if [[ -n "$temp_millic" ]]; then
+  temp_c=$(( (temp_millic + 500) / 1000 ))
+  temp_text=$(printf '%02dC' "$temp_c")
+else
+  temp_c=""
+  temp_text="n/a"
+fi
+
+battery_text="Battery n/a"
+for battery in /sys/class/power_supply/BAT*; do
+  [[ -d "$battery" ]] || continue
+  capacity=$(<"$battery/capacity")
+  status=$(<"$battery/status")
+  battery_text="Battery ${capacity}% ${status}"
+  break
+done
+
+text=$(printf 'SYS CPU %02d%% MEM %02d%% TMP %s' "$cpu_percent" "$mem_percent" "$temp_text")
+tooltip=$(printf 'Space Era telemetry\\nCPU %d%%\\nMemory %d%%\\nTemperature %s\\nLoad %s\\nDisk / %s%%\\n%s' \
+  "$cpu_percent" "$mem_percent" "$temp_text" "$load_avg" "$disk_percent" "$battery_text")
+
+jq -cn \
+  --arg text "$text" \
+  --arg tooltip "$tooltip" \
+  '{text: $text, tooltip: $tooltip, class: "spaceera-telemetry"}'
