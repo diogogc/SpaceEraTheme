@@ -520,8 +520,7 @@ Panel {
                   }
                 }
               }
-
-              // Section 2: Shortcuts & Operations
+              // Section 2: Shortcuts & Apollo Verb/Noun System
               Rectangle {
                 width: parent.width
                 height: 1
@@ -529,7 +528,7 @@ Panel {
               }
 
               Text {
-                text: "CONTROLS & SHORTCUTS"
+                text: "APOLLO VERB / NOUN COMMANDS"
                 color: "#78ff95"
                 font.family: "monospace"
                 font.pixelSize: Style.font.caption
@@ -538,7 +537,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: "• Type directly with your keyboard or click the buttons below.\n• Press Enter / ENTR to compute result.\n• Press Esc to close the DSKY console.\n• Right-click bar widget to quickly cycle through programs P01 → P16 → P25 → P30 → P40.\n• Click CLR to clear input, RSET to reset alarms."
+                text: "• PROG [ENTR]: Cycles to the next program.\n• PROG <num> [ENTR] or P<num>: Switches to Program (e.g. P16, P25, P30, P40).\n• VERB 37 NOUN <num> [ENTR]: Authentic Apollo change-program sequence (e.g. V37 N16 ENTR).\n• VERB 21 <val> [ENTR]: Loads value into R1.\n• VERB 99 [ENTR]: Reset system registers.\n• Click top tabs (CALC, TIME, DATA, BASE, SPD) for 1-click program switching."
                 color: "#c4d1d6"
                 font.family: "monospace"
                 font.pixelSize: Style.font.caption - 1
@@ -557,19 +556,19 @@ Panel {
 
             Repeater {
               model: [
-                { label: "VERB", key: "PROG_NEXT", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "VERB", key: "VERB", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "7", key: "7", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "8", key: "8", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "9", key: "9", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "CLR", key: "CLR", btnColor: "#fc3d21", btnBg: "#260e0a", btnBorder: "#4a1c14" },
 
-                { label: "NOUN", key: "PROG_NEXT", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "NOUN", key: "NOUN", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "4", key: "4", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "5", key: "5", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "6", key: "6", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "+", key: "+", btnColor: "#78ff95", btnBg: "#0e2417", btnBorder: "#1c4a2e" },
 
-                { label: "PROG", key: "PROG_NEXT", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "PROG", key: "PROG", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "1", key: "1", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "2", key: "2", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "3", key: "3", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },

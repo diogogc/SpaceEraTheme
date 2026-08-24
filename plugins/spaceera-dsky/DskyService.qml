@@ -7,6 +7,7 @@ Item {
   property string verb: "21"
   property string noun: "01"
 
+  property string inputMode: "math" // "math", "prog", "verb", "noun"
   property string inputBuffer: "0"
   property string r1: "+00000"
   property string r2: "+00000"
@@ -161,16 +162,25 @@ Item {
 
     if (key === "CLR") {
       inputBuffer = "0"
+      inputMode = "math"
       oprErr = false
     } else if (key === "RSET") {
       inputBuffer = "0"
+      inputMode = "math"
       oprErr = false
       uplinkActy = false
       noAtt = false
+    } else if (key === "PROG") {
+      inputMode = "prog"
+      inputBuffer = "P"
+    } else if (key === "VERB") {
+      inputMode = "verb"
+      inputBuffer = "V"
+    } else if (key === "NOUN") {
+      inputMode = "noun"
+      inputBuffer = "N"
     } else if (key === "PROG_NEXT") {
-      var modes = ["01", "16", "25", "30", "40"]
-      var idx = modes.indexOf(prog)
-      prog = modes[(idx + 1) % modes.length]
+      cycleNextProgram()
     } else if (key === "ENTR") {
       executeEnter()
     } else if (key === "M+") {
@@ -193,7 +203,92 @@ Item {
     updateModeOutputs()
   }
 
+  function cycleNextProgram() {
+    var modes = ["01", "16", "25", "30", "40"]
+    var idx = modes.indexOf(prog)
+    setProgram(modes[(idx + 1) % modes.length])
+  }
+
   function executeEnter() {
+    var raw = inputBuffer.trim().toUpperCase()
+    var modes = ["01", "16", "25", "30", "40"]
+
+    // 1. Program command (e.g. P16, PROG 16, P25, or just P)
+    if (/^(P|PROG)\s*([0-9]*)$/i.test(raw)) {
+      var match = raw.match(/^(?:P|PROG)\s*([0-9]*)$/i)
+      var targetProg = match && match[1] ? match[1].padStart(2, "0") : ""
+      if (targetProg && modes.indexOf(targetProg) >= 0) {
+        setProgram(targetProg)
+      } else {
+        cycleNextProgram()
+      }
+      inputBuffer = "0"
+      inputMode = "math"
+      uplinkActy = true
+      uplinkTimer.restart()
+      return
+    }
+
+    // 2. Verb & Noun command (e.g. V37 N16, V37 16, V21 42, V99)
+    if (/^V(?:ERB)?\s*([0-9]{1,2})(?:\s*N(?:OUN)?\s*([0-9]{1,2}))?(?:\s*(.+))?$/i.test(raw)) {
+      var vMatch = raw.match(/^V(?:ERB)?\s*([0-9]{1,2})(?:\s*N(?:OUN)?\s*([0-9]{1,2}))?(?:\s*(.+))?$/i)
+      var vNum = vMatch[1].padStart(2, "0")
+      var nNum = vMatch[2] ? vMatch[2].padStart(2, "0") : ""
+      var payload = vMatch[3] ? vMatch[3].trim() : ""
+
+      verb = vNum
+      if (nNum) noun = nNum
+
+      if (vNum === "37") {
+        // V37 = Change Program
+        var progTarget = nNum || (payload ? payload.padStart(2, "0") : "")
+        if (modes.indexOf(progTarget) >= 0) {
+          setProgram(progTarget)
+        } else {
+          cycleNextProgram()
+        }
+      } else if (vNum === "21" && payload) {
+        // V21 = Load R1
+        inputBuffer = payload
+      } else if (vNum === "22" && payload) {
+        // V22 = Load R2 / lastResult
+        lastResult = Number(payload) || 0
+      } else if (vNum === "23" && payload) {
+        // V23 = Load R3 / Memory
+        memoryValue = Number(payload) || 0
+      } else if (vNum === "99") {
+        // V99 = Reset
+        inputBuffer = "0"
+        memoryValue = 0
+        lastResult = 0
+        oprErr = false
+      }
+
+      inputBuffer = "0"
+      inputMode = "math"
+      uplinkActy = true
+      uplinkTimer.restart()
+      updateModeOutputs()
+      return
+    }
+
+    // 3. Noun command (e.g. N16, NOUN 25)
+    if (/^N(?:OUN)?\s*([0-9]{1,2})$/i.test(raw)) {
+      var nMatch = raw.match(/^N(?:OUN)?\s*([0-9]{1,2})$/i)
+      var targetNoun = nMatch[1].padStart(2, "0")
+      noun = targetNoun
+      if (verb === "37" && modes.indexOf(targetNoun) >= 0) {
+        setProgram(targetNoun)
+      }
+      inputBuffer = "0"
+      inputMode = "math"
+      uplinkActy = true
+      uplinkTimer.restart()
+      updateModeOutputs()
+      return
+    }
+
+    // 4. Standard Math / Calculation execution
     if (prog === "01") {
       var res = evaluateMath(inputBuffer)
       if (!isNaN(res)) {
@@ -203,11 +298,17 @@ Item {
         uplinkTimer.restart()
       }
     }
+    inputMode = "math"
     updateModeOutputs()
   }
 
   function setProgram(p) {
     prog = p
+    if (p === "01") { verb = "21"; noun = "01" }
+    else if (p === "16") { verb = "16"; noun = "16" }
+    else if (p === "25") { verb = "21"; noun = "25" }
+    else if (p === "30") { verb = "21"; noun = "30" }
+    else if (p === "40") { verb = "21"; noun = "40" }
     updateModeOutputs()
   }
 
