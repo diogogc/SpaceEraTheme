@@ -148,15 +148,16 @@ Panel {
                 ]
 
                 Rectangle {
+                  id: stageItem
                   required property var modelData
                   Layout.fillWidth: true
                   height: Style.space(24)
                   radius: 2
 
-                  readonly property bool isCurrent: (root.service.phase === "burn" && modelData.stage === 3) ||
-                                                    (root.service.phase === "coast" && modelData.stage === 4) ||
-                                                    (root.service.phase === "lunar" && modelData.stage === 5)
-                  readonly property bool isPast: modelData.stage < (root.service.phase === "burn" ? 3 : (root.service.phase === "coast" ? 4 : 5))
+                  readonly property bool isCurrent: (root.service.phase === "burn" && stageItem.modelData.stage === 3) ||
+                                                    (root.service.phase === "coast" && stageItem.modelData.stage === 4) ||
+                                                    (root.service.phase === "lunar" && stageItem.modelData.stage === 5)
+                  readonly property bool isPast: stageItem.modelData.stage < (root.service.phase === "burn" ? 3 : (root.service.phase === "coast" ? 4 : 5))
 
                   color: isCurrent ? (root.service.phase === "burn" ? "#78ff95" : "#6099ba") : (isPast ? "#14251c" : "#0c1217")
                   border.color: isCurrent ? "#ffffff" : (isPast ? "#2a4233" : "#18222b")
@@ -164,8 +165,8 @@ Panel {
 
                   Text {
                     anchors.centerIn: parent
-                    text: parent.modelData.label
-                    color: parent.isCurrent ? "#06090c" : (parent.isPast ? "#78ff95" : root.dim)
+                    text: stageItem.modelData.label
+                    color: stageItem.isCurrent ? "#06090c" : (stageItem.isPast ? "#78ff95" : root.dim)
                     font.family: "monospace"
                     font.pixelSize: Style.font.caption - 3
                     font.bold: true
@@ -393,18 +394,19 @@ Panel {
               ]
 
               Rectangle {
+                id: presetItem
                 required property var modelData
                 Layout.fillWidth: true
                 height: Style.space(26)
                 radius: Style.cornerRadius
-                color: root.service.burnDurationMinutes === modelData.b ? "#14251c" : "#0d141a"
-                border.color: root.service.burnDurationMinutes === modelData.b ? "#78ff95" : "#18222b"
+                color: root.service.burnDurationMinutes === presetItem.modelData.b ? "#14251c" : "#0d141a"
+                border.color: root.service.burnDurationMinutes === presetItem.modelData.b ? "#78ff95" : "#18222b"
                 border.width: 1
 
                 Text {
                   anchors.centerIn: parent
-                  text: parent.modelData.label
-                  color: parent.modelData.b === root.service.burnDurationMinutes ? "#78ff95" : root.dim
+                  text: presetItem.modelData.label
+                  color: presetItem.modelData.b === root.service.burnDurationMinutes ? "#78ff95" : root.dim
                   font.family: "monospace"
                   font.pixelSize: Style.font.caption - 2
                   font.bold: true
@@ -413,7 +415,7 @@ Panel {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.service.setPreset(parent.modelData.b, parent.modelData.c, 15)
+                  onClicked: root.service.setPreset(presetItem.modelData.b, presetItem.modelData.c, 15)
                 }
               }
             }
@@ -461,6 +463,7 @@ Panel {
                   model: [5, 15, 30, 60]
 
                   Rectangle {
+                    id: tminusItem
                     required property int modelData
                     Layout.fillWidth: true
                     height: Style.space(24)
@@ -471,7 +474,7 @@ Panel {
 
                     Text {
                       anchors.centerIn: parent
-                      text: "+" + parent.modelData + "M"
+                      text: "+" + tminusItem.modelData + "M"
                       color: "#6099ba"
                       font.family: "monospace"
                       font.pixelSize: Style.font.caption - 2
@@ -481,7 +484,7 @@ Panel {
                     MouseArea {
                       anchors.fill: parent
                       cursorShape: Qt.PointingHandCursor
-                      onClicked: root.service.addTminusMinutes(parent.modelData)
+                      onClicked: root.service.addTminusMinutes(tminusItem.modelData)
                     }
                   }
                 }

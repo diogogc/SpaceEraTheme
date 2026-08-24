@@ -42,7 +42,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(480))
+    contentWidth: panel.fittedContentWidth(Style.space(490))
     contentHeight: panel.fittedContentHeight(mainCol.implicitHeight + Style.space(24), Style.space(680))
 
     PanelKeyCatcher {
@@ -111,18 +111,19 @@ Panel {
                 ]
 
                 Rectangle {
+                  id: progBtn
                   required property var modelData
-                  width: Style.space(44)
-                  height: Style.space(22)
+                  width: Style.space(46)
+                  height: Style.space(24)
                   radius: Style.cornerRadius
-                  color: root.service.prog === modelData.code ? "#78ff95" : "#11171d"
-                  border.color: root.service.prog === modelData.code ? "#78ff95" : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.3)
+                  color: root.service.prog === progBtn.modelData.code ? "#78ff95" : "#11171d"
+                  border.color: root.service.prog === progBtn.modelData.code ? "#78ff95" : "#2a4233"
                   border.width: 1
 
                   Text {
                     anchors.centerIn: parent
-                    text: parent.modelData.label
-                    color: parent.modelData.code === root.service.prog ? "#06090c" : root.foreground
+                    text: progBtn.modelData.label
+                    color: progBtn.modelData.code === root.service.prog ? "#06090c" : root.foreground
                     font.family: "monospace"
                     font.pixelSize: Style.font.caption
                     font.bold: true
@@ -131,7 +132,7 @@ Panel {
                   MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.service.setProgram(parent.modelData.code)
+                    onClicked: root.service.setProgram(progBtn.modelData.code)
                   }
                 }
               }
@@ -152,7 +153,7 @@ Panel {
 
               // Left Column: Annunciator Warning Lights Matrix
               Column {
-                Layout.preferredWidth: Style.space(110)
+                Layout.preferredWidth: Style.space(115)
                 spacing: Style.space(4)
 
                 Repeater {
@@ -166,18 +167,19 @@ Panel {
                   ]
 
                   Rectangle {
+                    id: annuncItem
                     required property var modelData
                     width: parent.width
                     height: Style.space(24)
                     radius: 2
-                    color: modelData.active ? Qt.rgba(modelData.color === "#fc3d21" ? 0.98 : 0.47, modelData.color === "#fc3d21" ? 0.24 : 1.0, 0.13, 0.25) : "#0a0f14"
-                    border.color: modelData.active ? modelData.color : "#1a232c"
+                    color: annuncItem.modelData.active ? (annuncItem.modelData.color === "#fc3d21" ? "#38100c" : "#122b1c") : "#0a0f14"
+                    border.color: annuncItem.modelData.active ? annuncItem.modelData.color : "#1a232c"
                     border.width: 1
 
                     Text {
                       anchors.centerIn: parent
-                      text: parent.modelData.label
-                      color: parent.modelData.active ? parent.modelData.color : "#3a4a58"
+                      text: annuncItem.modelData.label
+                      color: annuncItem.modelData.active ? annuncItem.modelData.color : "#3a4a58"
                       font.family: "monospace"
                       font.pixelSize: Style.font.caption - 2
                       font.bold: true
@@ -293,11 +295,12 @@ Panel {
                   ]
 
                   Rectangle {
+                    id: regItem
                     required property var modelData
                     width: parent.width
                     height: Style.space(42)
                     color: "#020406"
-                    border.color: modelData.primary ? "#2a4233" : "#18222b"
+                    border.color: regItem.modelData.primary ? "#2a4233" : "#18222b"
                     border.width: 1
                     radius: 2
 
@@ -307,8 +310,8 @@ Panel {
                       anchors.rightMargin: 10
 
                       Text {
-                        text: parent.parent.modelData.label
-                        color: parent.parent.modelData.primary ? "#78ff95" : root.dim
+                        text: regItem.modelData.label
+                        color: regItem.modelData.primary ? "#78ff95" : root.dim
                         font.family: "monospace"
                         font.pixelSize: Style.font.caption - 2
                         font.bold: true
@@ -317,8 +320,8 @@ Panel {
                       Item { Layout.fillWidth: true }
 
                       Text {
-                        text: parent.parent.modelData.val
-                        color: parent.parent.modelData.primary ? "#78ff95" : "#c4d1d6"
+                        text: regItem.modelData.val
+                        color: regItem.modelData.primary ? "#78ff95" : "#c4d1d6"
                         font.family: "monospace"
                         font.pixelSize: Style.font.bodyLarge
                         font.bold: true
@@ -333,7 +336,7 @@ Panel {
           // Formula & Input Field
           Rectangle {
             width: parent.width
-            height: Style.space(34)
+            height: Style.space(36)
             radius: Style.cornerRadius
             color: "#06090c"
             border.color: calcInput.activeFocus ? "#78ff95" : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.3)
@@ -386,67 +389,68 @@ Panel {
           GridLayout {
             width: parent.width
             columns: 5
-            rowSpacing: Style.space(5)
-            columnSpacing: Style.space(5)
+            rowSpacing: Style.space(6)
+            columnSpacing: Style.space(6)
 
             Repeater {
               model: [
-                { label: "VERB", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26" },
-                { label: "7", key: "7", color: "#ffffff", bg: "#161d24" },
-                { label: "8", key: "8", color: "#ffffff", bg: "#161d24" },
-                { label: "9", key: "9", color: "#ffffff", bg: "#161d24" },
-                { label: "CLR", key: "CLR", color: "#fc3d21", bg: "#260e0a" },
+                { label: "VERB", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "7", key: "7", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "8", key: "8", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "9", key: "9", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "CLR", key: "CLR", color: "#fc3d21", bg: "#260e0a", border: "#4a1c14" },
 
-                { label: "NOUN", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26" },
-                { label: "4", key: "4", color: "#ffffff", bg: "#161d24" },
-                { label: "5", key: "5", color: "#ffffff", bg: "#161d24" },
-                { label: "6", key: "6", color: "#ffffff", bg: "#161d24" },
-                { label: "+", key: "+", color: "#78ff95", bg: "#0e2417" },
+                { label: "NOUN", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "4", key: "4", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "5", key: "5", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "6", key: "6", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "+", key: "+", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
 
-                { label: "PROG", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26" },
-                { label: "1", key: "1", color: "#ffffff", bg: "#161d24" },
-                { label: "2", key: "2", color: "#ffffff", bg: "#161d24" },
-                { label: "3", key: "3", color: "#ffffff", bg: "#161d24" },
-                { label: "-", key: "-", color: "#78ff95", bg: "#0e2417" },
+                { label: "PROG", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "1", key: "1", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "2", key: "2", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "3", key: "3", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "-", key: "-", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
 
-                { label: "RSET", key: "RSET", color: "#ffb454", bg: "#261c0d" },
-                { label: "+/-", key: "+/-", color: "#ffffff", bg: "#161d24" },
-                { label: "0", key: "0", color: "#ffffff", bg: "#161d24" },
-                { label: ".", key: ".", color: "#ffffff", bg: "#161d24" },
-                { label: "×", key: "×", color: "#78ff95", bg: "#0e2417" },
+                { label: "RSET", key: "RSET", color: "#ffb454", bg: "#261c0d", border: "#4a361a" },
+                { label: "+/-", key: "+/-", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "0", key: "0", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: ".", key: ".", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "×", key: "×", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
 
-                { label: "M+", key: "M+", color: "#6099ba", bg: "#0d1b26" },
-                { label: "MR", key: "MR", color: "#6099ba", bg: "#0d1b26" },
-                { label: "(", key: "(", color: "#c4d1d6", bg: "#161d24" },
-                { label: ")", key: ")", color: "#c4d1d6", bg: "#161d24" },
-                { label: "ENTR", key: "ENTR", color: "#06090c", bg: "#78ff95" }
+                { label: "M+", key: "M+", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "MR", key: "MR", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "(", key: "(", color: "#c4d1d6", bg: "#161d24", border: "#25313d" },
+                { label: ")", key: ")", color: "#c4d1d6", bg: "#161d24", border: "#25313d" },
+                { label: "ENTR", key: "ENTR", color: "#06090c", bg: "#78ff95", border: "#78ff95" }
               ]
 
               Rectangle {
+                id: keyBtn
                 required property var modelData
                 Layout.fillWidth: true
-                Layout.preferredHeight: Style.space(34)
+                Layout.preferredHeight: Style.space(36)
                 radius: 3
-                color: parent.modelData.bg
-                border.color: parent.modelData.key === "ENTR" ? "#78ff95" : Qt.rgba(parent.modelData.color.r || 1, parent.modelData.color.g || 1, parent.modelData.color.b || 1, 0.35)
+                color: keyBtn.modelData.bg
+                border.color: keyBtn.modelData.border
                 border.width: 1
 
                 Text {
                   anchors.centerIn: parent
-                  text: parent.modelData.label
-                  color: parent.modelData.color
+                  text: keyBtn.modelData.label
+                  color: keyBtn.modelData.color
                   font.family: "monospace"
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.body
                   font.bold: true
                 }
 
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onPressed: parent.opacity = 0.6
-                  onReleased: parent.opacity = 1.0
-                  onCanceled: parent.opacity = 1.0
-                  onClicked: root.service.pressKey(parent.modelData.key)
+                  onPressed: keyBtn.opacity = 0.5
+                  onReleased: keyBtn.opacity = 1.0
+                  onCanceled: keyBtn.opacity = 1.0
+                  onClicked: root.service.pressKey(keyBtn.modelData.key)
                 }
               }
             }
