@@ -12,6 +12,7 @@ Panel {
   property var anchorItem: null
   property var hostWidget: null
   property var dskyService: null
+  property bool showGuide: false
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -31,7 +32,9 @@ Panel {
   onOpenedChanged: {
     if (opened) {
       if (panelFlick) panelFlick.contentY = 0
-      Qt.callLater(function() { calcInput.forceActiveFocus() })
+      if (!showGuide) {
+        Qt.callLater(function() { calcInput.forceActiveFocus() })
+      }
     }
   }
 
@@ -42,13 +45,13 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(490))
-    contentHeight: panel.fittedContentHeight(mainCol.implicitHeight + Style.space(24), Style.space(680))
+    contentWidth: panel.fittedContentWidth(Style.space(510))
+    contentHeight: panel.fittedContentHeight(mainCol.implicitHeight + Style.space(24), Style.space(700))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: calcInput.activeFocus
+      blocked: calcInput.activeFocus && !root.showGuide
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -69,10 +72,10 @@ Panel {
           width: panelFlick.width
           spacing: Style.space(10)
 
-          // Top Header: Apollo DSKY Title and Program selector
+          // Top Header: Apollo DSKY Title, Program selector, and Guide toggle
           RowLayout {
             width: parent.width
-            spacing: Style.space(8)
+            spacing: Style.space(6)
 
             Row {
               spacing: Style.space(6)
@@ -113,27 +116,55 @@ Panel {
                 Rectangle {
                   id: progBtn
                   required property var modelData
-                  width: Style.space(46)
+                  width: Style.space(42)
                   height: Style.space(24)
                   radius: Style.cornerRadius
-                  color: root.service.prog === progBtn.modelData.code ? "#78ff95" : "#11171d"
-                  border.color: root.service.prog === progBtn.modelData.code ? "#78ff95" : "#2a4233"
+                  color: !root.showGuide && root.service.prog === progBtn.modelData.code ? "#78ff95" : "#11171d"
+                  border.color: !root.showGuide && root.service.prog === progBtn.modelData.code ? "#78ff95" : "#2a4233"
                   border.width: 1
 
                   Text {
                     anchors.centerIn: parent
                     text: progBtn.modelData.label
-                    color: progBtn.modelData.code === root.service.prog ? "#06090c" : root.foreground
+                    color: !root.showGuide && progBtn.modelData.code === root.service.prog ? "#06090c" : root.foreground
                     font.family: "monospace"
-                    font.pixelSize: Style.font.caption
+                    font.pixelSize: Style.font.caption - 1
                     font.bold: true
                   }
 
                   MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.service.setProgram(progBtn.modelData.code)
+                    onClicked: {
+                      root.showGuide = false
+                      root.service.setProgram(progBtn.modelData.code)
+                    }
                   }
+                }
+              }
+
+              // Guide / How-To Toggle Button
+              Rectangle {
+                width: Style.space(52)
+                height: Style.space(24)
+                radius: Style.cornerRadius
+                color: root.showGuide ? "#6099ba" : "#0d1b26"
+                border.color: root.showGuide ? "#ffffff" : "#183248"
+                border.width: 1
+
+                Text {
+                  anchors.centerIn: parent
+                  text: "? GUIDE"
+                  color: root.showGuide ? "#06090c" : "#6099ba"
+                  font.family: "monospace"
+                  font.pixelSize: Style.font.caption - 1
+                  font.bold: true
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.showGuide = !root.showGuide
                 }
               }
             }
@@ -141,19 +172,23 @@ Panel {
 
           // Main DSKY Interface Container
           BorderSurface {
+            id: dskySurface
             width: parent.width
-            padding: Style.space(12)
+            implicitHeight: Style.space(190)
+            padding: Style.space(10)
             radius: Style.cornerRadius
             color: "#06090c"
-            borderSpec: Border.flat(Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.4), 1)
+            borderSpec: Border.flat("#2a4233", 1)
 
             RowLayout {
-              width: parent.width
-              spacing: Style.space(12)
+              anchors.fill: parent
+              anchors.margins: dskySurface.padding
+              spacing: Style.space(10)
 
               // Left Column: Annunciator Warning Lights Matrix
               Column {
                 Layout.preferredWidth: Style.space(115)
+                Layout.fillHeight: true
                 spacing: Style.space(4)
 
                 Repeater {
@@ -170,7 +205,7 @@ Panel {
                     id: annuncItem
                     required property var modelData
                     width: parent.width
-                    height: Style.space(24)
+                    height: Style.space(22)
                     radius: 2
                     color: annuncItem.modelData.active ? (annuncItem.modelData.color === "#fc3d21" ? "#38100c" : "#122b1c") : "#0a0f14"
                     border.color: annuncItem.modelData.active ? annuncItem.modelData.color : "#1a232c"
@@ -181,7 +216,7 @@ Panel {
                       text: annuncItem.modelData.label
                       color: annuncItem.modelData.active ? annuncItem.modelData.color : "#3a4a58"
                       font.family: "monospace"
-                      font.pixelSize: Style.font.caption - 2
+                      font.pixelSize: Style.font.caption - 3
                       font.bold: true
                     }
                   }
@@ -191,16 +226,17 @@ Panel {
               // Right Column: 7-Segment DSKY Digital Displays (PROG / VERB / NOUN + R1 / R2 / R3)
               Column {
                 Layout.fillWidth: true
-                spacing: Style.space(6)
+                Layout.fillHeight: true
+                spacing: Style.space(5)
 
                 // Verb / Noun / Prog Status Bar
                 RowLayout {
                   width: parent.width
-                  spacing: Style.space(6)
+                  spacing: Style.space(5)
 
                   Rectangle {
                     Layout.fillWidth: true
-                    height: Style.space(38)
+                    height: Style.space(34)
                     color: "#020406"
                     border.color: "#18222b"
                     border.width: 1
@@ -229,7 +265,7 @@ Panel {
 
                   Rectangle {
                     Layout.fillWidth: true
-                    height: Style.space(38)
+                    height: Style.space(34)
                     color: "#020406"
                     border.color: "#18222b"
                     border.width: 1
@@ -258,7 +294,7 @@ Panel {
 
                   Rectangle {
                     Layout.fillWidth: true
-                    height: Style.space(38)
+                    height: Style.space(34)
                     color: "#020406"
                     border.color: "#18222b"
                     border.width: 1
@@ -298,7 +334,7 @@ Panel {
                     id: regItem
                     required property var modelData
                     width: parent.width
-                    height: Style.space(42)
+                    height: Style.space(36)
                     color: "#020406"
                     border.color: regItem.modelData.primary ? "#2a4233" : "#18222b"
                     border.width: 1
@@ -313,7 +349,7 @@ Panel {
                         text: regItem.modelData.label
                         color: regItem.modelData.primary ? "#78ff95" : root.dim
                         font.family: "monospace"
-                        font.pixelSize: Style.font.caption - 2
+                        font.pixelSize: Style.font.caption - 3
                         font.bold: true
                       }
 
@@ -385,8 +421,131 @@ Panel {
             }
           }
 
-          // Physical DSKY Keypad Grid
+          // --- VIEW 1: DSKY GUIDE / HOW-TO MANUAL ---
+          BorderSurface {
+            visible: root.showGuide
+            width: parent.width
+            padding: Style.space(12)
+            radius: Style.cornerRadius
+            color: "#04070a"
+            borderSpec: Border.flat("#183248", 1)
+
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
+
+              RowLayout {
+                width: parent.width
+                Text {
+                  text: "📖 APOLLO DSKY OPERATIONS MANUAL"
+                  color: "#6099ba"
+                  font.family: "monospace"
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+                Item { Layout.fillWidth: true }
+                Rectangle {
+                  width: Style.space(70)
+                  height: Style.space(22)
+                  radius: 2
+                  color: "#0d1b26"
+                  border.color: "#6099ba"
+                  border.width: 1
+                  Text {
+                    anchors.centerIn: parent
+                    text: "◀ KEYPAD"
+                    color: "#6099ba"
+                    font.family: "monospace"
+                    font.pixelSize: Style.font.caption - 2
+                    font.bold: true
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.showGuide = false
+                  }
+                }
+              }
+
+              // Section 1: Programs (PROG)
+              Rectangle {
+                width: parent.width
+                height: 1
+                color: "#18222b"
+              }
+
+              Text {
+                text: "PROGRAM MODES (PROG)"
+                color: "#78ff95"
+                font.family: "monospace"
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Repeater {
+                model: [
+                  { prog: "P01", name: "CALC", desc: "Evaluate arithmetic expressions (e.g. 1024*768, sqrt(256), 2^16, sin(pi/2)). R1=Result, R2=Prev, R3=Memory (M+/MR)." },
+                  { prog: "P16", name: "TIME", desc: "Mission clock & epoch. R1=Unix Epoch (seconds), R2=Live UTC Mission Time (HHMMSSZ), R3=Local Time." },
+                  { prog: "P25", name: "DATA", desc: "Byte & storage converter. Enter bytes in AGC> to calculate KiB/MiB in R2, and GiB/TiB in R3." },
+                  { prog: "P30", name: "BASE", desc: "Number base converter. Enter decimal in AGC> to calculate Hexadecimal (0x...) in R2, and Binary in R3." },
+                  { prog: "P40", name: "SPD", desc: "Orbital speed converter. Enter km/h in AGC> to calculate MPH/knots in R2, and m/s / Mach in R3." }
+                ]
+
+                Column {
+                  required property var modelData
+                  width: parent.width
+                  spacing: 2
+
+                  Row {
+                    spacing: 6
+                    Text {
+                      text: parent.parent.modelData.prog + " [" + parent.parent.modelData.name + "]"
+                      color: "#6099ba"
+                      font.family: "monospace"
+                      font.pixelSize: Style.font.caption - 1
+                      font.bold: true
+                    }
+                  }
+                  Text {
+                    width: parent.width
+                    text: parent.parent.modelData.desc
+                    color: "#a4b5be"
+                    font.family: "monospace"
+                    font.pixelSize: Style.font.caption - 2
+                    wrapMode: Text.Wrap
+                  }
+                }
+              }
+
+              // Section 2: Shortcuts & Operations
+              Rectangle {
+                width: parent.width
+                height: 1
+                color: "#18222b"
+              }
+
+              Text {
+                text: "CONTROLS & SHORTCUTS"
+                color: "#78ff95"
+                font.family: "monospace"
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Text {
+                width: parent.width
+                text: "• Type directly with your keyboard or click the buttons below.\n• Press Enter / ENTR to compute result.\n• Press Esc to close the DSKY console.\n• Right-click bar widget to quickly cycle through programs P01 → P16 → P25 → P30 → P40.\n• Click CLR to clear input, RSET to reset alarms."
+                color: "#c4d1d6"
+                font.family: "monospace"
+                font.pixelSize: Style.font.caption - 2
+                wrapMode: Text.Wrap
+              }
+            }
+          }
+
+          // --- VIEW 2: Physical DSKY Keypad Grid ---
           GridLayout {
+            visible: !root.showGuide
             width: parent.width
             columns: 5
             rowSpacing: Style.space(6)
@@ -394,35 +553,35 @@ Panel {
 
             Repeater {
               model: [
-                { label: "VERB", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "7", key: "7", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "8", key: "8", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "9", key: "9", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "CLR", key: "CLR", color: "#fc3d21", bg: "#260e0a", border: "#4a1c14" },
+                { label: "VERB", key: "PROG_NEXT", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "7", key: "7", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "8", key: "8", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "9", key: "9", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "CLR", key: "CLR", btnColor: "#fc3d21", btnBg: "#260e0a", btnBorder: "#4a1c14" },
 
-                { label: "NOUN", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "4", key: "4", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "5", key: "5", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "6", key: "6", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "+", key: "+", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
+                { label: "NOUN", key: "PROG_NEXT", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "4", key: "4", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "5", key: "5", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "6", key: "6", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "+", key: "+", btnColor: "#78ff95", btnBg: "#0e2417", btnBorder: "#1c4a2e" },
 
-                { label: "PROG", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "1", key: "1", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "2", key: "2", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "3", key: "3", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "-", key: "-", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
+                { label: "PROG", key: "PROG_NEXT", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "1", key: "1", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "2", key: "2", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "3", key: "3", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "-", key: "-", btnColor: "#78ff95", btnBg: "#0e2417", btnBorder: "#1c4a2e" },
 
-                { label: "RSET", key: "RSET", color: "#ffb454", bg: "#261c0d", border: "#4a361a" },
-                { label: "+/-", key: "+/-", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "0", key: "0", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: ".", key: ".", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "×", key: "×", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
+                { label: "RSET", key: "RSET", btnColor: "#ffb454", btnBg: "#261c0d", btnBorder: "#4a361a" },
+                { label: "+/-", key: "+/-", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "0", key: "0", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: ".", key: ".", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "×", key: "×", btnColor: "#78ff95", btnBg: "#0e2417", btnBorder: "#1c4a2e" },
 
-                { label: "M+", key: "M+", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "MR", key: "MR", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "(", key: "(", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: ")", key: ")", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "ENTR", key: "ENTR", color: "#06090c", bg: "#78ff95", border: "#78ff95" }
+                { label: "M+", key: "M+", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "MR", key: "MR", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
+                { label: "(", key: "(", btnColor: "#6099ba", btnBg: "#0d1b26", border: "#183248" },
+                { label: ")", key: ")", btnColor: "#6099ba", btnBg: "#0d1b26", border: "#183248" },
+                { label: "ENTR", key: "ENTR", btnColor: "#06090c", btnBg: "#78ff95", border: "#78ff95" }
               ]
 
               Rectangle {
@@ -431,14 +590,14 @@ Panel {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Style.space(36)
                 radius: 3
-                color: keyBtn.modelData.bg
-                border.color: keyBtn.modelData.border
+                color: keyBtn.modelData.btnBg
+                border.color: keyBtn.modelData.btnBorder || "#183248"
                 border.width: 1
 
                 Text {
                   anchors.centerIn: parent
                   text: keyBtn.modelData.label
-                  color: keyBtn.modelData.color
+                  color: keyBtn.modelData.btnColor
                   font.family: "monospace"
                   font.pixelSize: Style.font.body
                   font.bold: true
