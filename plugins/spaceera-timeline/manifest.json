@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "spaceera.timeline",
+  "name": "Space Era Flight Director",
+  "version": "0.1.0",
+  "author": "diogo carvalho",
+  "license": "CC-BY-4.0",
+  "description": "Apollo Flight Director mission timeline, MET clock, and propulsion burn focus timer for the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Flight Director",
+    "description": "Mission Elapsed Time, T-Minus countdowns, and focus burn timer.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

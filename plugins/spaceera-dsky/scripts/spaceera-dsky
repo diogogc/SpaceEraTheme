@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+expr="${*:-}"
+if [[ -z "$expr" ]]; then
+  now=$(date -u +%s)
+  utc=$(date -u +%H%M%SZ)
+  loc=$(date +%H%M%SL)
+  jq -cn \
+    --arg epoch "$now" \
+    --arg utc "$utc" \
+    --arg loc "$loc" \
+    '{prog: "16", epoch: $epoch, utc: $utc, loc: $loc}'
+  exit 0
+fi
+
+if command -v bc &>/dev/null; then
+  res=$(echo "scale=4; $expr" | bc -l 2>/dev/null || echo "error")
+else
+  res=$(awk "BEGIN { print $expr }" 2>/dev/null || echo "error")
+fi
+
+jq -cn \
+  --arg expr "$expr" \
+  --arg res "$res" \
+  '{prog: "01", expr: $expr, result: $res}'

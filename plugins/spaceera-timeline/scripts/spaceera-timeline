@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cmd="${1:-status}"
+
+case "$cmd" in
+  met)
+    uptime_sec=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)
+    d=$((uptime_sec / 86400))
+    h=$(( (uptime_sec % 86400) / 3600 ))
+    m=$(( (uptime_sec % 3600) / 60 ))
+    s=$((uptime_sec % 60))
+    printf 'MET %02d:%02d:%02d:%02d\n' "$d" "$h" "$m" "$s"
+    ;;
+  *)
+    uptime_sec=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)
+    d=$((uptime_sec / 86400))
+    h=$(( (uptime_sec % 86400) / 3600 ))
+    m=$(( (uptime_sec % 3600) / 60 ))
+    s=$((uptime_sec % 60))
+    met=$(printf '%02d:%02d:%02d:%02d' "$d" "$h" "$m" "$s")
+    jq -cn --arg met "$met" '{status: "online", met: $met}'
+    ;;
+esac

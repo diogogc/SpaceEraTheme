@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "spaceera.dsky",
+  "name": "Space Era DSKY",
+  "version": "0.1.0",
+  "author": "diogo carvalho",
+  "license": "CC-BY-4.0",
+  "description": "Apollo Guidance Computer DSKY calculator, unit converter, and register console for the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "DSKY Calculator",
+    "description": "Apollo DSKY calculator and multi-base unit converter.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

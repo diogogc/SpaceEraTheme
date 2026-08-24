@@ -8,7 +8,9 @@ It is not a landing page. It is the cockpit.
 
 - Space Era Omarchy theme with matched Mission Control palette.
 - Opaque black menu bar for a clean instrument-panel feel.
-- Apollo-inspired system telemetry plugin with console-style needle gauges.
+- Apollo-inspired system telemetry plugin with console-style needle gauges (CPU, MEM, VRAM, TMP).
+- Apollo DSKY AGC Calculator (`spaceera.dsky`) with math evaluation, register displays, and multi-unit conversions (time, data, bases, velocity).
+- Flight Director Mission Timeline & Pomodoro Engine (`spaceera.timeline`) with Mission Elapsed Time (MET), T-Minus event countdowns, and propulsion burn focus sessions.
 - Live ISS tracker plugin with:
   - real coastline map data
   - live ISS marker
@@ -47,6 +49,8 @@ Then install the bundled console plugins:
 mkdir -p ~/.config/omarchy/plugins
 cp -a ~/.config/omarchy/themes/space-era/plugins/spaceera-iss-tracker ~/.config/omarchy/plugins/spaceera.iss-tracker
 cp -a ~/.config/omarchy/themes/space-era/plugins/spaceera-telemetry ~/.config/omarchy/plugins/spaceera.telemetry
+cp -a ~/.config/omarchy/themes/space-era/plugins/spaceera-dsky ~/.config/omarchy/plugins/spaceera.dsky
+cp -a ~/.config/omarchy/themes/space-era/plugins/spaceera-timeline ~/.config/omarchy/plugins/spaceera.timeline
 ```
 
 Add the widgets to your Omarchy bar configuration if they are not already present in `~/.config/omarchy/shell.json`:
@@ -57,7 +61,9 @@ Add the widgets to your Omarchy bar configuration if they are not already presen
     "layout": {
       "right": [
         "spaceera.iss-tracker",
-        "spaceera.telemetry"
+        "spaceera.telemetry",
+        "spaceera.dsky",
+        "spaceera.timeline"
       ]
     }
   }
@@ -93,9 +99,35 @@ Right-click the bar widget to refresh live data.
 
 ## Telemetry Usage
 
-Click `Telemetry` in the bar to open the system panel. The panel shows CPU, memory, and temperature as character-based Apollo-style gauges.
+Click `Telemetry` in the bar to open the system panel. The panel shows CPU, memory, video memory, and temperature as character-based Apollo-style needle gauges.
 
 Right-click the bar widget to refresh immediately.
+
+## DSKY Calculator Usage
+
+Click `DSKY` in the bar to open the Apollo Guidance Computer DSKY panel.
+
+- Type standard math expressions directly (e.g. `25 * 60`, `sqrt(144)`, `2^10`) or use the physical keypad.
+- Switch programs/modes with top tabs or `PROG`:
+  - `PROG 01`: General arithmetic and multi-register calculation (`R1` result, `R2` previous, `R3` memory).
+  - `PROG 16`: Unix epoch timestamp and live UTC / local mission time.
+  - `PROG 25`: Data storage unit converter (Bytes $\leftrightarrow$ KiB/MiB $\leftrightarrow$ GiB/TiB).
+  - `PROG 30`: Base converter (Decimal $\leftrightarrow$ Hexadecimal $\leftrightarrow$ Binary).
+  - `PROG 40`: Velocity converter (km/h $\leftrightarrow$ mph/knots $\leftrightarrow$ m/s/Mach).
+- Right-click the bar widget to cycle program modes quickly.
+
+## Flight Director & Pomodoro Usage
+
+Click the Flight Director icon in the bar to open the mission timeline.
+
+- **Mission Elapsed Time (MET)**: Real-time clock tracking session duration.
+- **Propulsion Burn Engine (Focus Sessions)**:
+  - Click `▶ IGNITION` to start a focus burn (default 25m).
+  - Click `❚❚ HOLD` to pause or `⏭ STAGE SEP` to transition to coasting orbit (break).
+  - Automatic desktop notification on burnout and stage transitions.
+  - Quick presets for `25/5m`, `45/10m`, `50/10m`, and `60/15m` focus cycles.
+- **T-Minus Countdown**: Quick buttons (`+5M`, `+15M`, `+30M`, `+60M`) for meeting or deadline countdowns.
+- Right-click the bar widget to quickly toggle/pause the active burn.
 
 ## Credits
 
