@@ -395,33 +395,33 @@ Panel {
             Repeater {
               model: [
                 { label: "VERB", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "7", key: "7", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: "8", key: "8", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: "9", key: "9", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "7", key: "7", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "8", key: "8", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "9", key: "9", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
                 { label: "CLR", key: "CLR", color: "#fc3d21", bg: "#260e0a", border: "#4a1c14" },
 
                 { label: "NOUN", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "4", key: "4", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: "5", key: "5", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: "6", key: "6", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "4", key: "4", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "5", key: "5", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "6", key: "6", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
                 { label: "+", key: "+", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
 
                 { label: "PROG", key: "PROG_NEXT", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "1", key: "1", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: "2", key: "2", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: "3", key: "3", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "1", key: "1", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "2", key: "2", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "3", key: "3", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
                 { label: "-", key: "-", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
 
                 { label: "RSET", key: "RSET", color: "#ffb454", bg: "#261c0d", border: "#4a361a" },
-                { label: "+/-", key: "+/-", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: "0", key: "0", color: "#ffffff", bg: "#161d24", border: "#25313d" },
-                { label: ".", key: ".", color: "#ffffff", bg: "#161d24", border: "#25313d" },
+                { label: "+/-", key: "+/-", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: "0", key: "0", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: ".", key: ".", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
                 { label: "×", key: "×", color: "#78ff95", bg: "#0e2417", border: "#1c4a2e" },
 
                 { label: "M+", key: "M+", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
                 { label: "MR", key: "MR", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
-                { label: "(", key: "(", color: "#c4d1d6", bg: "#161d24", border: "#25313d" },
-                { label: ")", key: ")", color: "#c4d1d6", bg: "#161d24", border: "#25313d" },
+                { label: "(", key: "(", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
+                { label: ")", key: ")", color: "#6099ba", bg: "#0d1b26", border: "#183248" },
                 { label: "ENTR", key: "ENTR", color: "#06090c", bg: "#78ff95", border: "#78ff95" }
               ]
 
