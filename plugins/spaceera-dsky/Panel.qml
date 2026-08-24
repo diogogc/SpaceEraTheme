@@ -46,7 +46,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(510))
-    contentHeight: panel.fittedContentHeight(mainCol.implicitHeight + Style.space(24), Style.space(700))
+    contentHeight: panel.fittedContentHeight(mainCol.implicitHeight + Style.space(24), Style.space(720))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -145,7 +145,7 @@ Panel {
 
               // Guide / How-To Toggle Button
               Rectangle {
-                width: Style.space(52)
+                width: Style.space(54)
                 height: Style.space(24)
                 radius: Style.cornerRadius
                 color: root.showGuide ? "#6099ba" : "#0d1b26"
@@ -154,7 +154,7 @@ Panel {
 
                 Text {
                   anchors.centerIn: parent
-                  text: "? GUIDE"
+                  text: root.showGuide ? "◀ BACK" : "? GUIDE"
                   color: root.showGuide ? "#06090c" : "#6099ba"
                   font.family: "monospace"
                   font.pixelSize: Style.font.caption - 1
@@ -423,14 +423,17 @@ Panel {
 
           // --- VIEW 1: DSKY GUIDE / HOW-TO MANUAL ---
           BorderSurface {
+            id: guideSurface
             visible: root.showGuide
             width: parent.width
+            implicitHeight: guideCol.implicitHeight + Style.space(24)
             padding: Style.space(12)
             radius: Style.cornerRadius
             color: "#04070a"
             borderSpec: Border.flat("#183248", 1)
 
             Column {
+              id: guideCol
               width: parent.width
               spacing: Style.space(8)
 
@@ -492,6 +495,7 @@ Panel {
                 ]
 
                 Column {
+                  id: guideProgItem
                   required property var modelData
                   width: parent.width
                   spacing: 2
@@ -499,19 +503,19 @@ Panel {
                   Row {
                     spacing: 6
                     Text {
-                      text: parent.parent.modelData.prog + " [" + parent.parent.modelData.name + "]"
+                      text: guideProgItem.modelData.prog + " [" + guideProgItem.modelData.name + "]"
                       color: "#6099ba"
                       font.family: "monospace"
-                      font.pixelSize: Style.font.caption - 1
+                      font.pixelSize: Style.font.caption
                       font.bold: true
                     }
                   }
                   Text {
                     width: parent.width
-                    text: parent.parent.modelData.desc
+                    text: guideProgItem.modelData.desc
                     color: "#a4b5be"
                     font.family: "monospace"
-                    font.pixelSize: Style.font.caption - 2
+                    font.pixelSize: Style.font.caption - 1
                     wrapMode: Text.Wrap
                   }
                 }
@@ -537,7 +541,7 @@ Panel {
                 text: "• Type directly with your keyboard or click the buttons below.\n• Press Enter / ENTR to compute result.\n• Press Esc to close the DSKY console.\n• Right-click bar widget to quickly cycle through programs P01 → P16 → P25 → P30 → P40.\n• Click CLR to clear input, RSET to reset alarms."
                 color: "#c4d1d6"
                 font.family: "monospace"
-                font.pixelSize: Style.font.caption - 2
+                font.pixelSize: Style.font.caption - 1
                 wrapMode: Text.Wrap
               }
             }
@@ -569,7 +573,7 @@ Panel {
                 { label: "1", key: "1", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "2", key: "2", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
                 { label: "3", key: "3", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
-                { label: "-", key: "-", btnColor: "#78ff95", btnBg: "#0e2417", btnBorder: "#1c4a2e" },
+                { label: "-", key: "-", btnColor: "#78ff95", btnBg: "#0e2417", border: "#1c4a2e" },
 
                 { label: "RSET", key: "RSET", btnColor: "#ffb454", btnBg: "#261c0d", btnBorder: "#4a361a" },
                 { label: "+/-", key: "+/-", btnColor: "#6099ba", btnBg: "#0d1b26", btnBorder: "#183248" },
