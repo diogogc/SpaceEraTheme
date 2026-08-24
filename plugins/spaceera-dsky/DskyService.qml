@@ -56,7 +56,20 @@ Item {
     return sign + absStr
   }
 
-  function evaluateMath(expr) {
+  function isDskyCommand(str) {
+    if (!str) return false
+    var s = str.trim().toUpperCase()
+    return /^(P|PROG|V|VERB|N|NOUN)/i.test(s)
+  }
+
+  function evaluateMath(expr, reportError) {
+    if (!expr || expr === "0") {
+      if (reportError) root.oprErr = false
+      return 0
+    }
+    if (isDskyCommand(expr)) {
+      return NaN
+    }
     try {
       var sanitized = expr
         .replace(/×/g, "*")
@@ -79,18 +92,24 @@ Item {
       if (typeof res !== "number" || isNaN(res) || !isFinite(res)) {
         throw new Error("Math Error")
       }
-      root.oprErr = false
+      if (reportError) root.oprErr = false
       return res
     } catch (e) {
-      root.oprErr = true
+      if (reportError) root.oprErr = true
       return NaN
     }
   }
 
   function updateModeOutputs() {
+    var raw = inputBuffer.trim()
+    if (isDskyCommand(raw)) {
+      root.oprErr = false
+      return
+    }
+
     var num = Number(inputBuffer)
     if (isNaN(num)) {
-      var calcRes = evaluateMath(inputBuffer)
+      var calcRes = evaluateMath(inputBuffer, false)
       num = isNaN(calcRes) ? 0 : calcRes
     }
 
@@ -290,7 +309,7 @@ Item {
 
     // 4. Standard Math / Calculation execution
     if (prog === "01") {
-      var res = evaluateMath(inputBuffer)
+      var res = evaluateMath(inputBuffer, true)
       if (!isNaN(res)) {
         lastResult = res
         inputBuffer = String(res)
@@ -304,6 +323,7 @@ Item {
 
   function setProgram(p) {
     prog = p
+    oprErr = false
     if (p === "01") { verb = "21"; noun = "01" }
     else if (p === "16") { verb = "16"; noun = "16" }
     else if (p === "25") { verb = "21"; noun = "25" }
