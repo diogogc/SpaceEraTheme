@@ -40,7 +40,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(430))
+    contentWidth: panel.fittedContentWidth(Style.space(540))
     contentHeight: panel.fittedContentHeight(mainCol.implicitHeight + Style.space(24), Style.space(560))
 
     PanelKeyCatcher {
@@ -142,11 +142,25 @@ Panel {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredHeight: Style.space(230)
+                title: "VRAM %"
+                value: service.vram >= 0 ? service.vram : 0
+                minimum: 0
+                maximum: 100
+                unit: service.vram >= 0 ? "%" : "n/a"
+                foreground: root.foreground
+                dim: root.dim
+                fontFamily: root.fontFamily
+              }
+
+              CharacterGauge {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: Style.space(230)
                 title: "TMP C"
                 value: service.temp >= 0 ? service.temp : 30
                 minimum: 30
                 maximum: 100
-                unit: "C"
+                unit: service.temp >= 0 ? "C" : "n/a"
                 foreground: root.foreground
                 dim: root.dim
                 fontFamily: root.fontFamily

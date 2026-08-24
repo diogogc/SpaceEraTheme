@@ -57,6 +57,52 @@ read_system_temp() {
   (( max_temp > 0 )) && printf '%s\n' "$max_temp"
 }
 
+read_vram_percent() {
+  local used total out card sysfile totalfile
+
+  if command -v nvidia-smi &>/dev/null; then
+    out=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || true)
+    if [[ -n "$out" ]]; then
+      out=$(head -n 1 <<< "$out")
+      if [[ "$out" =~ ([0-9]+),[[:space:]]*([0-9]+) ]]; then
+        used="${BASH_REMATCH[1]}"
+        total="${BASH_REMATCH[2]}"
+        if (( total > 0 )); then
+          printf '%d\n' "$(( (used * 100 + total / 2) / total ))"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  for card in /sys/class/drm/card[0-9]*/device; do
+    [[ -d "$card" ]] || continue
+
+    if [[ -r "$card/mem_info_vram_used" && -r "$card/mem_info_vram_total" ]]; then
+      used=$(sed -n '1p' "$card/mem_info_vram_used" 2>/dev/null || true)
+      total=$(sed -n '1p' "$card/mem_info_vram_total" 2>/dev/null || true)
+      if [[ "$used" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ ]] && (( total > 0 )); then
+        printf '%d\n' "$(( (used * 100 + total / 2) / total ))"
+        return 0
+      fi
+    fi
+
+    for sysfile in "$card"/tile*/memory/vram*/used "$card"/gt*/mem_info_vram_used; do
+      [[ -r "$sysfile" ]] || continue
+      totalfile="${sysfile%_used}_total"
+      [[ -r "$totalfile" ]] || continue
+      used=$(sed -n '1p' "$sysfile" 2>/dev/null || true)
+      total=$(sed -n '1p' "$totalfile" 2>/dev/null || true)
+      if [[ "$used" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ ]] && (( total > 0 )); then
+        printf '%d\n' "$(( (used * 100 + total / 2) / total ))"
+        return 0
+      fi
+    done
+  done
+
+  return 1
+}
+
 read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
 idle_now=$((idle + iowait))
 total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
@@ -80,6 +126,15 @@ mem_percent=$(awk '
     else printf "0";
   }
 ' /proc/meminfo)
+
+vram_percent=$(read_vram_percent || true)
+if [[ -n "$vram_percent" ]]; then
+  vram_json="$vram_percent"
+  vram_text=$(printf '%02d%%' "$vram_percent")
+else
+  vram_json="null"
+  vram_text="n/a"
+fi
 
 load_avg=$(awk '{ print $1 }' /proc/loadavg)
 disk_percent=$(df -P / | awk 'NR == 2 { gsub("%", "", $5); print $5 }')
@@ -105,17 +160,21 @@ done
 jq -cn \
   --argjson cpu "$cpu_percent" \
   --argjson mem "$mem_percent" \
+  --argjson vram "$vram_json" \
   --argjson temp "$temp_json" \
   --arg load "$load_avg" \
   --argjson disk "$disk_percent" \
+  --arg vramText "$vram_text" \
   --arg tempText "$temp_text" \
   --arg battery "$battery_text" \
   '{
     cpu: $cpu,
     mem: $mem,
+    vram: $vram,
     temp: $temp,
     load: $load,
     disk: $disk,
+    vramText: $vramText,
     tempText: $tempText,
     battery: $battery
   }'

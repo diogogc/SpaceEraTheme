@@ -57,6 +57,52 @@ read_system_temp() {
   (( max_temp > 0 )) && printf '%s\n' "$max_temp"
 }
 
+read_vram_percent() {
+  local used total out card sysfile totalfile
+
+  if command -v nvidia-smi &>/dev/null; then
+    out=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || true)
+    if [[ -n "$out" ]]; then
+      out=$(head -n 1 <<< "$out")
+      if [[ "$out" =~ ([0-9]+),[[:space:]]*([0-9]+) ]]; then
+        used="${BASH_REMATCH[1]}"
+        total="${BASH_REMATCH[2]}"
+        if (( total > 0 )); then
+          printf '%d\n' "$(( (used * 100 + total / 2) / total ))"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  for card in /sys/class/drm/card[0-9]*/device; do
+    [[ -d "$card" ]] || continue
+
+    if [[ -r "$card/mem_info_vram_used" && -r "$card/mem_info_vram_total" ]]; then
+      used=$(sed -n '1p' "$card/mem_info_vram_used" 2>/dev/null || true)
+      total=$(sed -n '1p' "$card/mem_info_vram_total" 2>/dev/null || true)
+      if [[ "$used" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ ]] && (( total > 0 )); then
+        printf '%d\n' "$(( (used * 100 + total / 2) / total ))"
+        return 0
+      fi
+    fi
+
+    for sysfile in "$card"/tile*/memory/vram*/used "$card"/gt*/mem_info_vram_used; do
+      [[ -r "$sysfile" ]] || continue
+      totalfile="${sysfile%_used}_total"
+      [[ -r "$totalfile" ]] || continue
+      used=$(sed -n '1p' "$sysfile" 2>/dev/null || true)
+      total=$(sed -n '1p' "$totalfile" 2>/dev/null || true)
+      if [[ "$used" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ ]] && (( total > 0 )); then
+        printf '%d\n' "$(( (used * 100 + total / 2) / total ))"
+        return 0
+      fi
+    done
+  done
+
+  return 1
+}
+
 read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
 idle_now=$((idle + iowait))
 total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
@@ -81,6 +127,15 @@ mem_percent=$(awk '
   }
 ' /proc/meminfo)
 
+vram_percent=$(read_vram_percent || true)
+if [[ -n "$vram_percent" ]]; then
+  vram_text=$(printf '%02d%%' "$vram_percent")
+  vram_tooltip=$(printf '%d%%' "$vram_percent")
+else
+  vram_text="n/a"
+  vram_tooltip="n/a"
+fi
+
 load_avg=$(awk '{ print $1 }' /proc/loadavg)
 disk_percent=$(df -P / | awk 'NR == 2 { gsub("%", "", $5); print $5 }')
 temp_millic=$(read_system_temp || true)
@@ -101,9 +156,9 @@ for battery in /sys/class/power_supply/BAT*; do
   break
 done
 
-text=$(printf 'SYS CPU %02d%% MEM %02d%% TMP %s' "$cpu_percent" "$mem_percent" "$temp_text")
-tooltip=$(printf 'Space Era telemetry\\nCPU %d%%\\nMemory %d%%\\nTemperature %s\\nLoad %s\\nDisk / %s%%\\n%s' \
-  "$cpu_percent" "$mem_percent" "$temp_text" "$load_avg" "$disk_percent" "$battery_text")
+text=$(printf 'SYS CPU %02d%% MEM %02d%% VRM %s TMP %s' "$cpu_percent" "$mem_percent" "$vram_text" "$temp_text")
+tooltip=$(printf 'Space Era telemetry\nCPU %d%%\nMemory %d%%\nVRAM %s\nTemperature %s\nLoad %s\nDisk / %s%%\n%s' \
+  "$cpu_percent" "$mem_percent" "$vram_tooltip" "$temp_text" "$load_avg" "$disk_percent" "$battery_text")
 
 jq -cn \
   --arg text "$text" \

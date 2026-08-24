@@ -22,6 +22,7 @@ BorderSurface {
   }
 
   function activeRow() {
+    if (unit === "n/a") return -1
     var ratio = (value - minimum) / Math.max(1, maximum - minimum)
     return 10 - Math.round(clamp(ratio, 0, 1) * 10)
   }
@@ -76,7 +77,7 @@ BorderSurface {
 
     Text {
       width: parent.width
-      text: Math.round(root.value) + root.unit
+      text: root.unit === "n/a" ? "n/a" : (Math.round(root.value) + root.unit)
       color: "#78ff95"
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

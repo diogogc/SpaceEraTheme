@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Space Era Telemetry",
-    "description": "Show CPU, memory, and temperature in Apollo-style needle gauges.",
+    "description": "Show CPU, memory, video memory, and temperature in Apollo-style needle gauges.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"
