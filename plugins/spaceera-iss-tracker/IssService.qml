@@ -34,6 +34,18 @@ Item {
   readonly property int nextPassCountdown: nextPassAvailable ? Math.max(0, nextPassStart - nowSeconds) : 0
   readonly property int nextPassDuration: nextPassAvailable ? Math.max(0, Number(nextPass.duration) || (nextPassEnd - nextPassStart)) : 0
   readonly property int nextPassMinDistanceKm: nextPassAvailable ? Math.round(Number(nextPass.min_distance_km) || 0) : 0
+  property var tleInfo: ({available: false, age_days: 0, stale: false, warning: ""})
+  property bool updatingTle: false
+  property string tleStatus: ""
+
+  function updateTle() {
+    if (statusProc.running) return
+    tleStatus = "UPDATING TLE..."
+    updatingTle = true
+    statusProc.command = [scriptPath, "--fetch-tle"]
+    statusProc.running = true
+  }
+
 
   readonly property string summary: ok
     ? ("ISS " + formatCoord(latitude, "N", "S") + " " + formatCoord(longitude, "E", "W") + (issVisibleFromUser ? " VISIBLE" : ""))
@@ -124,6 +136,7 @@ Item {
       root.timestamp = Number(data.timestamp) || 0
       root.orbit = Array.isArray(data.orbit) ? data.orbit : []
       root.nextPass = data.next_pass || ({available: false})
+      root.tleInfo = data.tle_info || ({available: false, age_days: 0, stale: false, warning: ""})
       var location = data.user_location || {}
       root.userLocationConfigured = location.configured === true
       root.userCity = String(location.city || "")
@@ -134,6 +147,11 @@ Item {
       root.cityStatus = root.settingCity
         ? (root.userLocationConfigured ? "LOCKED " + root.userCity.toUpperCase() : String(data.error || "CITY NOT FOUND").toUpperCase())
         : root.cityStatus
+      if (root.updatingTle) {
+        root.tleStatus = (root.tleInfo && root.tleInfo.stale) ? "TLE STALE" : "TLE UPDATED"
+        root.updatingTle = false
+        root.refresh()
+      }
     } catch (e) {
       root.ok = false
       root.lastError = "ISS parse error"

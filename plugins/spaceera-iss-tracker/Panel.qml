@@ -76,17 +76,16 @@ Panel {
         Column {
           id: mainCol
           width: panelFlick.width
-          spacing: Style.space(12)
+          spacing: Style.space(8)
 
-          Item {
+          // Header Row: Title, Next Pass Summary & Signal Status Badge
+          RowLayout {
             width: parent.width
-            implicitHeight: titleRow.implicitHeight
+            spacing: Style.space(8)
 
             Row {
-              id: titleRow
-              spacing: Style.space(10)
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+              Layout.alignment: Qt.AlignVCenter
 
               Text {
                 text: "⌖"
@@ -104,76 +103,26 @@ Panel {
                 font.bold: true
               }
             }
-          }
-
-          ConsoleWorldMap {
-            width: parent.width
-            implicitHeight: Style.space(285)
-            latitude: service.latitude
-            longitude: service.longitude
-            orbit: service.orbit
-            userLocationConfigured: service.userLocationConfigured
-            userLatitude: service.userLatitude
-            userLongitude: service.userLongitude
-            visibilityRadiusKm: service.visibilityRadiusKm
-            foreground: root.foreground
-            dim: root.dim
-          }
-
-          RowLayout {
-            width: parent.width
-            spacing: Style.space(8)
-
-            Text {
-              text: "HOME"
-              color: "#78ff95"
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
-
-            TextField {
-              id: cityField
-              Layout.fillWidth: true
-              text: service.userLocationConfigured ? service.userCity : ""
-              placeholderText: "City"
-              foreground: root.foreground
-              accent: Color.accent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              verticalPadding: Style.space(3)
-              onAccepted: service.setCity(text)
-            }
-
-            Button {
-              text: "SET"
-              foreground: "#78ff95"
-              accent: Color.accent
-              fontFamily: root.fontFamily
-              fontSize: Style.font.caption
-              horizontalPadding: Style.space(8)
-              verticalPadding: Style.space(3)
-              onClicked: service.setCity(cityField.text)
-            }
-          }
-
-          RowLayout {
-            width: parent.width
-            spacing: Style.space(8)
 
             Text {
               Layout.fillWidth: true
+              Layout.alignment: Qt.AlignVCenter
               text: service.userLocationConfigured
-                ? ("USER " + service.userCity.toUpperCase() + "   " + service.formatCoord(service.userLatitude, "N", "S") + " " + service.formatCoord(service.userLongitude, "E", "W"))
-                : "USER LOCATION NOT SET"
-              color: service.userLocationConfigured ? "#78ff95" : root.dim
+                ? (service.nextPassAvailable
+                  ? ("NEXT PASS " + service.formatClock(service.nextPassStart) + " T-" + service.formatDuration(service.nextPassCountdown) + " (" + service.nextPassMinDistanceKm + "km)")
+                  : "PASS SCANNING 24H")
+                : ""
+              color: service.nextPassAvailable ? "#c4d1d6" : root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
+              horizontalAlignment: Text.AlignHCenter
+              elide: Text.ElideRight
             }
 
             Text {
-              text: service.issVisibleFromUser ? "SIGNAL ACQUIRED" : (service.cityStatus !== "" ? service.cityStatus : (service.userLocationConfigured ? "OUT RANGE" : ""))
+              Layout.alignment: Qt.AlignVCenter
+              text: service.issVisibleFromUser ? "SIGNAL ACQUIRED" : (service.cityStatus !== "" ? service.cityStatus : (service.userLocationConfigured ? "OUT OF RANGE" : ""))
               color: service.issVisibleFromUser ? (root.signalFlash ? "#c4d1d6" : "#fc3d21") : root.dim
               opacity: service.issVisibleFromUser ? (root.signalFlash ? 1 : 0.5) : 1
               font.family: root.fontFamily
@@ -185,73 +134,238 @@ Panel {
             }
           }
 
-          RowLayout {
+          // TLE Stale Alert Banner (Only visible when TLE > 15 days old)
+          Rectangle {
             width: parent.width
-            spacing: Style.space(8)
+            implicitHeight: Style.space(32)
+            color: "#2a1b00"
+            border.color: "#ffaa00"
+            border.width: 1
+            radius: Style.space(4)
+            visible: service.tleInfo && service.tleInfo.stale === true
 
-            Text {
-              Layout.fillWidth: true
-              text: service.userLocationConfigured
-                ? (service.nextPassAvailable
-                  ? ("NEXT PASS " + service.formatClock(service.nextPassStart) + "   T-" + service.formatDuration(service.nextPassCountdown) + "   DUR " + service.formatDuration(service.nextPassDuration))
-                  : "NEXT PASS SCANNING 24H")
-                : "NEXT PASS NEEDS USER LOCATION"
-              color: service.nextPassAvailable ? "#c4d1d6" : root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
+            RowLayout {
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(8)
+              anchors.rightMargin: Style.space(8)
+              spacing: Style.space(6)
 
-            Text {
-              text: service.nextPassAvailable ? ("MIN " + service.nextPassMinDistanceKm + " KM") : ""
-              color: "#78ff95"
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
+              Text {
+                text: "⚠"
+                color: "#ffaa00"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Text {
+                Layout.fillWidth: true
+                text: "TLE orbital data is " + Math.floor(service.tleInfo ? service.tleInfo.age_days : 0) + " days old (>15d)."
+                color: "#ffaa00"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
+              Button {
+                text: service.updatingTle ? "UPDATING..." : "UPDATE TLE"
+                foreground: "#ffaa00"
+                accent: "#ffaa00"
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.space(8)
+                verticalPadding: Style.space(2)
+                onClicked: service.updateTle()
+              }
             }
           }
 
-          RowLayout {
+          // World Map Display
+          ConsoleWorldMap {
             width: parent.width
-            spacing: Style.space(8)
+            implicitHeight: Style.space(260)
+            latitude: service.latitude
+            longitude: service.longitude
+            orbit: service.orbit
+            userLocationConfigured: service.userLocationConfigured
+            userLatitude: service.userLatitude
+            userLongitude: service.userLongitude
+            visibilityRadiusKm: service.visibilityRadiusKm
+            foreground: root.foreground
+            dim: root.dim
+          }
 
-            Text {
-              Layout.fillWidth: true
-              text: "ISS " + service.formatCoord(service.latitude, "N", "S") + "   " + service.formatCoord(service.longitude, "E", "W") + (service.userLocationConfigured ? ("   DIST " + Math.round(service.distanceToUserKm) + " KM") : "")
-              color: "#78ff95"
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
+          // ==========================================
+          // GROUP 1: USER CONTROLS & TLE MANAGEMENT
+          // ==========================================
+          Rectangle {
+            width: parent.width
+            implicitHeight: controlRow.implicitHeight + Style.space(10)
+            color: "#0a120e"
+            border.color: "#1b3326"
+            border.width: 1
+            radius: Style.space(4)
 
-            Text {
-              text: service.cached ? "CACHE" : service.visibility.toUpperCase()
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
+            RowLayout {
+              id: controlRow
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(10)
+              anchors.rightMargin: Style.space(10)
+              anchors.topMargin: Style.space(5)
+              anchors.bottomMargin: Style.space(5)
+              spacing: Style.space(8)
+
+              // City Input Sub-Group
+              Text {
+                text: "CITY"
+                color: "#78ff95"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              TextField {
+                id: cityField
+                implicitWidth: Style.space(150)
+                text: service.userLocationConfigured ? service.userCity : ""
+                placeholderText: "Enter city..."
+                foreground: root.foreground
+                accent: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                verticalPadding: Style.space(3)
+                onAccepted: service.setCity(text)
+              }
+
+              Button {
+                text: "SET"
+                foreground: "#78ff95"
+                accent: Color.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.space(8)
+                verticalPadding: Style.space(3)
+                onClicked: service.setCity(cityField.text)
+              }
+
+              Item { Layout.fillWidth: true }
+
+              // TLE Management Sub-Group
+              Text {
+                text: "TLE " + (service.tleInfo && service.tleInfo.available ? (Math.floor(service.tleInfo.age_days) + "d") : "N/A")
+                color: service.tleInfo && service.tleInfo.stale ? "#ffaa00" : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Button {
+                text: service.updatingTle ? "UPDATING..." : "UPDATE TLE"
+                foreground: service.tleInfo && service.tleInfo.stale ? "#ffaa00" : "#78ff95"
+                accent: Color.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.space(8)
+                verticalPadding: Style.space(3)
+                onClicked: service.updateTle()
+              }
             }
           }
 
-          RowLayout {
+          // ==========================================
+          // GROUP 2: LOCATIONS & COORDINATES (ISS + USER)
+          // ==========================================
+          Rectangle {
             width: parent.width
-            spacing: Style.space(8)
+            implicitHeight: locCol.implicitHeight + Style.space(10)
+            color: "#080c10"
+            border.color: "#162330"
+            border.width: 1
+            radius: Style.space(4)
 
-            Text {
-              Layout.fillWidth: true
-              text: "ALT " + Math.round(service.altitude) + " KM   VIS " + Math.round(service.visibilityRadiusKm) + " KM"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
+            ColumnLayout {
+              id: locCol
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(10)
+              anchors.rightMargin: Style.space(10)
+              anchors.topMargin: Style.space(5)
+              anchors.bottomMargin: Style.space(5)
+              spacing: Style.space(4)
 
-            Text {
-              text: "VEL " + Math.round(service.velocity) + " KM/H"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
+              // Row 1: ISS Coordinates & Telemetry
+              RowLayout {
+                width: parent.width
+                spacing: Style.space(8)
+
+                Text {
+                  text: "ISS"
+                  color: "#78ff95"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Text {
+                  text: service.formatCoord(service.latitude, "N", "S") + "  " + service.formatCoord(service.longitude, "E", "W")
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Text {
+                  text: "ALT " + Math.round(service.altitude) + " km  VEL " + Math.round(service.velocity) + " km/h"
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Text {
+                  text: service.cached ? "CACHE" : service.visibility.toUpperCase()
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+              }
+
+              // Row 2: User Location & Slant Range Distance
+              RowLayout {
+                width: parent.width
+                spacing: Style.space(8)
+
+                Text {
+                  text: "USER"
+                  color: service.userLocationConfigured ? "#78ff95" : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Text {
+                  Layout.fillWidth: true
+                  text: service.userLocationConfigured
+                    ? (service.userCity.toUpperCase() + " (" + service.formatCoord(service.userLatitude, "N", "S") + " " + service.formatCoord(service.userLongitude, "E", "W") + ")")
+                    : "NOT SET"
+                  color: service.userLocationConfigured ? root.foreground : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  text: service.userLocationConfigured ? ("RANGE " + Math.round(service.distanceToUserKm) + " km") : ""
+                  color: "#78ff95"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+              }
             }
           }
         }

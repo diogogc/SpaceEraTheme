@@ -75,17 +75,18 @@ BarWidget {
     anchors.bottomMargin: 4
     radius: 2
     color: "#78ff95"
-    opacity: service.issVisibleFromUser && root.flashPhase ? 1 : 0
+    opacity: service.issVisibleFromUser && root.flashPhase ? 0.25 : 0
+    Behavior on opacity { NumberAnimation { duration: 150 } }
   }
 
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: service.issVisibleFromUser && root.flashPhase ? "ACQUIRED" : "⌖ ISS"
+    text: "⌖ ISS"
     active: root.opened || service.issVisibleFromUser
     useActiveColor: true
-    activeColor: service.issVisibleFromUser && root.flashPhase ? "#030506" : Color.accent
+    activeColor: service.issVisibleFromUser ? (root.flashPhase ? "#ffffff" : "#78ff95") : Color.accent
     tooltipText: "ISS Tracker: " + (service.issVisibleFromUser ? "SIGNAL ACQUIRED" : service.summary)
       + (service.userLocationConfigured ? (" / " + service.userCity + " " + Math.round(service.distanceToUserKm) + "KM") : "")
       + (service.nextPassAvailable ? (" / NEXT T-" + service.formatDuration(service.nextPassCountdown)) : "")

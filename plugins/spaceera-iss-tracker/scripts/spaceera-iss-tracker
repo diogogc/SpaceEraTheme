@@ -1,13 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-state_base="${XDG_RUNTIME_DIR:-/tmp}"
+uid=$(id -u 2>/dev/null || printf '%s' 1000)
+
+ensure_secure_dir() {
+  local dir="$1"
+  if [[ -L "$dir" ]]; then
+    rm -f "$dir" 2>/dev/null || return 1
+  fi
+  if ! mkdir -p -m 0700 "$dir" 2>/dev/null; then
+    return 1
+  fi
+  if [[ -L "$dir" ]]; then
+    return 1
+  fi
+  local owner
+  owner=$(stat -c '%u' "$dir" 2>/dev/null || true)
+  if [[ "$owner" != "$uid" ]]; then
+    return 1
+  fi
+  chmod 0700 "$dir" 2>/dev/null || true
+  return 0
+}
+
+state_base="${XDG_RUNTIME_DIR:-/tmp/user-$uid}"
 state_dir="$state_base/omarchy-spaceera-iss-tracker"
-if ! mkdir -p "$state_dir" 2>/dev/null || ! touch "$state_dir/.write-test" 2>/dev/null; then
-  state_dir="/tmp/omarchy-spaceera-iss-tracker"
-  mkdir -p "$state_dir"
-else
-  rm -f "$state_dir/.write-test"
+
+if ! ensure_secure_dir "$state_dir"; then
+  state_dir="/tmp/user-$uid/omarchy-spaceera-iss-tracker"
+  if ! ensure_secure_dir "$state_dir"; then
+    printf '%s\n' '{"ok":false,"error":"insecure state directory"}'
+    exit 1
+  fi
 fi
 
 cache_file="$state_dir/position.json"
@@ -15,7 +39,11 @@ pass_cache_file="$state_dir/next-pass.json"
 config_base="${XDG_CONFIG_HOME:-$HOME/.config}"
 config_dir="$config_base/spaceera"
 config_file="$config_dir/iss-location.json"
+tle_file="$config_dir/iss-tle.json"
+
 api_url="https://api.wheretheiss.at/v1/satellites/25544"
+celestrak_url="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=JSON"
+
 max_response_bytes=65536
 max_stdout_bytes=131072
 max_future_points=721
@@ -26,7 +54,7 @@ empty_pass='{"available":false,"current":false,"start":0,"end":0,"closest":0,"co
 
 fetch_json() {
   local url="$1"
-  local timeout="${2:-5}"
+  local timeout="${2:-6}"
   curl -fsSL --max-time "$timeout" --max-filesize "$max_response_bytes" "$url" 2>/dev/null || true
 }
 
@@ -39,26 +67,75 @@ emit_json() {
   printf '%s\n' "$payload"
 }
 
-file_within_limit() {
+read_safe_file() {
   local path="$1"
-  [[ -r "$path" ]] || return 1
+  local max_bytes="${2:-$max_stdout_bytes}"
+  [[ -f "$path" && ! -L "$path" ]] || return 1
   local size
   size=$(wc -c < "$path" 2>/dev/null || printf '%s' 0)
-  ((size <= max_stdout_bytes))
+  ((size > 0 && size <= max_bytes)) || return 1
+  cat "$path" 2>/dev/null
+}
+
+atomic_write() {
+  local target="$1"
+  local content="$2"
+  local target_dir
+  target_dir="$(dirname "$target")"
+  ensure_secure_dir "$target_dir" || return 1
+  local tmp_file="${target}.tmp.$$"
+  rm -f "$tmp_file" 2>/dev/null || true
+  printf '%s\n' "$content" > "$tmp_file" 2>/dev/null || return 1
+  chmod 0600 "$tmp_file" 2>/dev/null || true
+  mv -f "$tmp_file" "$target" 2>/dev/null || { rm -f "$tmp_file" 2>/dev/null; return 1; }
 }
 
 read_location() {
-  if [[ -r "$config_file" ]]; then
+  local content
+  if content=$(read_safe_file "$config_file" 65536); then
     jq -c '{
       configured: (.configured == true),
       city: (.city // ""),
       latitude: ((.latitude // 0) | tonumber),
       longitude: ((.longitude // 0) | tonumber)
-    }' "$config_file" 2>/dev/null || printf '%s\n' "$empty_location"
+    }' <<<"$content" 2>/dev/null || printf '%s\n' "$empty_location"
   else
     printf '%s\n' "$empty_location"
   fi
 }
+
+fetch_and_save_tle() {
+  ensure_secure_dir "$config_dir" || return 1
+  local raw
+  raw=$(fetch_json "$celestrak_url" 8)
+  if [[ -n "$raw" ]] && jq -e '.[0].EPOCH or .[0].NORAD_CAT_ID == 25544' >/dev/null 2>&1 <<<"$raw"; then
+    local now
+    now="$(date +%s)"
+    local wrapped
+    wrapped=$(jq -c --argjson fetched_at "$now" '{
+      fetched_at: $fetched_at,
+      data: .[0]
+    }' <<<"$raw")
+    atomic_write "$tle_file" "$wrapped" || return 1
+    return 0
+  fi
+  return 1
+}
+
+if [[ "${1:-}" == "--fetch-tle" || "${1:-}" == "--update-tle" ]]; then
+  if fetch_and_save_tle; then
+    printf '%s\n' '{"ok":true,"message":"TLE updated successfully"}'
+  else
+    printf '%s\n' '{"ok":false,"error":"Failed to fetch TLE from CelesTrak"}'
+    exit 1
+  fi
+  exit 0
+fi
+
+# Ensure TLE exists
+if [[ ! -f "$tle_file" || -L "$tle_file" ]]; then
+  fetch_and_save_tle || true
+fi
 
 with_location() {
   local input="$1"
@@ -73,164 +150,11 @@ with_location() {
   emit_json "$payload"
 }
 
-predict_next_pass() {
-  local timestamp="$1"
-  local altitude="$2"
-  local loc
-  loc="$(read_location)"
-
-  if ! jq -e '.configured == true' >/dev/null 2>&1 <<<"$loc"; then
-    printf '%s\n' "$empty_pass"
-    return
-  fi
-
-  local now
-  now="$(date +%s)"
-  if file_within_limit "$pass_cache_file" && jq -e --argjson loc "$loc" --argjson now "$now" '
-    (.generated_at // 0) + 600 > $now
-    and (.user_location.latitude == $loc.latitude)
-    and (.user_location.longitude == $loc.longitude)
-  ' "$pass_cache_file" >/dev/null 2>&1; then
-    jq -c '.next_pass' "$pass_cache_file"
-    return
-  fi
-
-  if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
-    printf '%s\n' "$empty_pass"
-    return
-  fi
-
-  local future_file="$state_dir/future-positions.json"
-  local future="[]"
-  local offset=0
-  while [[ "$offset" -le 86400 ]]; do
-    local timestamps=""
-    local i=0
-    while [[ "$i" -lt 30 && "$offset" -le 86400 ]]; do
-      if [[ -n "$timestamps" ]]; then timestamps+=","; fi
-      timestamps+="$((timestamp + offset))"
-      offset=$((offset + 120))
-      i=$((i + 1))
-    done
-
-    local chunk=""
-    chunk=$(fetch_json "$api_url/positions?timestamps=$timestamps" 5)
-    if [[ -n "$chunk" ]] && jq -e 'type == "array"' >/dev/null 2>&1 <<<"$chunk"; then
-      future=$(jq -cs --argjson max_points "$max_future_points" '
-        (.[0] + (.[1][0:30] | map({
-          latitude: ((.latitude // 0) | tonumber),
-          longitude: ((.longitude // 0) | tonumber),
-          timestamp: ((.timestamp // 0) | tonumber)
-        })))[:$max_points]
-      ' <(printf '%s\n' "$future") <(printf '%s\n' "$chunk"))
-    fi
-  done
-
-  jq -c --argjson max_points "$max_future_points" '.[:$max_points]' <<<"$future" > "$future_file"
-
-  local pass
-  pass=$(python3 - "$loc" "$future_file" "$timestamp" "$altitude" <<'PY'
-import json
-import math
-import sys
-
-earth_radius_km = 6371.0
-loc = json.loads(sys.argv[1])
-future_path = sys.argv[2]
-now = int(float(sys.argv[3]))
-altitude = float(sys.argv[4] or 420)
-radius = earth_radius_km * math.acos(earth_radius_km / (earth_radius_km + max(altitude, 1.0)))
-
-with open(future_path, "r", encoding="utf-8") as fh:
-    points = json.load(fh)
-
-user_lat = math.radians(float(loc["latitude"]))
-user_lon = math.radians(float(loc["longitude"]))
-
-def distance_km(point):
-    lat = math.radians(float(point.get("latitude", 0)))
-    lon = math.radians(float(point.get("longitude", 0)))
-    dlat = lat - user_lat
-    dlon = lon - user_lon
-    a = math.sin(dlat / 2) ** 2 + math.cos(user_lat) * math.cos(lat) * math.sin(dlon / 2) ** 2
-    return earth_radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1 - a)))
-
-samples = []
-for point in points:
-    try:
-        stamp = int(float(point.get("timestamp", 0)))
-        if stamp < now:
-            continue
-        dist = distance_km(point)
-    except Exception:
-        continue
-    samples.append((stamp, dist, dist <= radius))
-
-pass_info = {
-    "available": False,
-    "current": False,
-    "start": 0,
-    "end": 0,
-    "closest": 0,
-    "countdown": 0,
-    "duration": 0,
-    "min_distance_km": 0,
-    "radius_km": round(radius),
-    "horizon_hours": 24,
-}
-
-in_pass = False
-start = None
-best_stamp = None
-best_dist = None
-last_in = None
-
-for stamp, dist, inside in samples:
-    if inside and not in_pass:
-        in_pass = True
-        start = stamp
-        best_stamp = stamp
-        best_dist = dist
-        last_in = stamp
-    elif inside:
-        last_in = stamp
-        if best_dist is None or dist < best_dist:
-            best_dist = dist
-            best_stamp = stamp
-    elif in_pass:
-        break
-
-if in_pass and start is not None:
-    end = last_in or start
-    pass_info.update({
-        "available": True,
-        "current": start <= now + 120,
-        "start": start,
-        "end": end,
-        "closest": best_stamp or start,
-        "countdown": max(0, start - now),
-        "duration": max(0, end - start),
-        "min_distance_km": round(best_dist or 0),
-    })
-
-print(json.dumps(pass_info, separators=(",", ":")))
-PY
-)
-
-  jq -cn --argjson loc "$loc" --argjson next_pass "$pass" --argjson generated_at "$now" '{
-    generated_at: $generated_at,
-    user_location: $loc,
-    next_pass: $next_pass
-  }' > "$pass_cache_file"
-
-  printf '%s\n' "$pass"
-}
-
 if [[ "${1:-}" == "--clear-city" ]]; then
-  mkdir -p "$config_dir"
-  printf '%s\n' "$empty_location" > "$config_file"
-  printf '%s\n' "$empty_pass" > "$pass_cache_file"
-  with_location "$(jq -cn '{ok:false,cached:false,latitude:0,longitude:0,altitude:0,velocity:0,visibility:"offline",timestamp:0,orbit:[]}')"
+  ensure_secure_dir "$config_dir" || true
+  atomic_write "$config_file" "$empty_location" || true
+  atomic_write "$pass_cache_file" "$empty_pass" || true
+  with_location "$(jq -cn '{ok:false,cached:false,latitude:0,longitude:0,altitude:0,velocity:0,visibility:"offline",timestamp:0,orbit:[],tle_info:{available:false,age_days:0,stale:false,warning:""}}')"
   exit 0
 fi
 
@@ -252,42 +176,231 @@ if [[ "${1:-}" == "--set-city" ]]; then
     exit 1
   fi
 
-  mkdir -p "$config_dir"
-  jq -c '{
+  ensure_secure_dir "$config_dir" || true
+  city_data=$(jq -c '{
     configured: true,
     city: ((.results[0].name // "") + (if (.results[0].country_code // "") != "" then ", " + .results[0].country_code else "" end)),
     latitude: (.results[0].latitude | tonumber),
     longitude: (.results[0].longitude | tonumber)
-  }' <<<"$geo_raw" > "$config_file"
+  }' <<<"$geo_raw")
+  atomic_write "$config_file" "$city_data" || true
 fi
 
+# Run calculation engine using Python
+loc_data="$(read_location)"
+calc_result=""
+if command -v python3 >/dev/null 2>&1; then
+  calc_result=$(python3 - "$tle_file" "$loc_data" "$pass_cache_file" <<'PY'
+import json
+import math
+import sys
+import os
+import time
+from datetime import datetime, timezone
+
+now = int(time.time())
+tle_path = sys.argv[1]
+loc = json.loads(sys.argv[2])
+pass_cache_path = sys.argv[3]
+
+earth_radius_km = 6378.137
+mu = 398600.4418
+J2 = 0.00108263
+
+tle_info = {
+    "available": False,
+    "fetched_at": 0,
+    "age_days": 0,
+    "stale": False,
+    "warning": ""
+}
+
+tle_data = None
+if os.path.isfile(tle_path) and not os.path.islink(tle_path):
+    try:
+        with open(tle_path, "r", encoding="utf-8") as fh:
+            wrapped = json.load(fh)
+            fetched_at = int(wrapped.get("fetched_at", 0))
+            tle_data = wrapped.get("data", {})
+            age_days = (now - fetched_at) / 86400.0 if fetched_at > 0 else 0
+            is_stale = age_days > 15.0
+            warning_msg = f"TLE data is {int(age_days)} days old (>15d). Update recommended." if is_stale else ""
+            tle_info = {
+                "available": True,
+                "fetched_at": fetched_at,
+                "age_days": round(age_days, 1),
+                "stale": is_stale,
+                "warning": warning_msg
+            }
+    except Exception:
+        tle_data = None
+
+def parse_epoch(epoch_str):
+    try:
+        dt = datetime.fromisoformat(epoch_str.rstrip("Z")).replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return now
+
+def propagate_tle(tle, target_time):
+    epoch_ts = parse_epoch(tle.get("EPOCH", ""))
+    dt_sec = target_time - epoch_ts
+
+    inc = math.radians(float(tle.get("INCLINATION", 51.6333)))
+    raan = math.radians(float(tle.get("RA_OF_ASC_NODE", 0)))
+    ecc = float(tle.get("ECCENTRICITY", 0.00077))
+    argp = math.radians(float(tle.get("ARG_OF_PERICENTER", 0)))
+    M0 = math.radians(float(tle.get("MEAN_ANOMALY", 0)))
+    n_rev_day = float(tle.get("MEAN_MOTION", 15.4959))
+
+    n_rad_s = n_rev_day * 2.0 * math.pi / 86400.0
+    a = (mu / (n_rad_s ** 2)) ** (1.0 / 3.0)
+
+    p = a * (1 - ecc**2)
+    dRAAN_dt = -1.5 * J2 * (earth_radius_km / p)**2 * n_rad_s * math.cos(inc)
+    dargp_dt = 0.75 * J2 * (earth_radius_km / p)**2 * n_rad_s * (5 * (math.cos(inc)**2) - 1)
+
+    raan_t = raan + dRAAN_dt * dt_sec
+    argp_t = argp + dargp_dt * dt_sec
+    M_t = (M0 + n_rad_s * dt_sec) % (2 * math.pi)
+
+    E = M_t
+    for _ in range(10):
+        E = E - (E - ecc * math.sin(E) - M_t) / (1 - ecc * math.cos(E))
+
+    v = 2 * math.atan2(math.sqrt(1 + ecc) * math.sin(E / 2), math.sqrt(1 - ecc) * math.cos(E / 2))
+    r = a * (1 - ecc * math.cos(E))
+    u = argp_t + v
+
+    j2000_epoch = 946728000.0
+    d_j2000_days = (target_time - j2000_epoch) / 86400.0
+    gmst = math.radians((280.46061837 + 360.98564736629 * d_j2000_days) % 360)
+
+    long_node = raan_t - gmst
+    x_orb = r * math.cos(u)
+    y_orb = r * math.sin(u)
+
+    X = x_orb * math.cos(long_node) - y_orb * math.cos(inc) * math.sin(long_node)
+    Y = x_orb * math.sin(long_node) + y_orb * math.cos(inc) * math.cos(long_node)
+    Z = y_orb * math.sin(inc)
+
+    lat = math.degrees(math.atan2(Z, math.sqrt(X**2 + Y**2)))
+    lon = math.degrees(math.atan2(Y, X))
+    alt = r - earth_radius_km
+    velocity = math.sqrt(mu / a) * 3600.0
+
+    return {
+        "latitude": round(lat, 5),
+        "longitude": round(lon, 5),
+        "altitude": round(alt, 1),
+        "velocity": round(velocity, 1),
+        "timestamp": int(target_time)
+    }
+
+if tle_data:
+    current_pos = propagate_tle(tle_data, now)
+    orbit_points = [propagate_tle(tle_data, now + offset) for offset in range(-2700, 2701, 300)]
+    
+    # Predict next pass using TLE propagation
+    pass_info = {
+        "available": False, "current": False, "start": 0, "end": 0, "closest": 0,
+        "countdown": 0, "duration": 0, "min_distance_km": 0, "radius_km": 0, "horizon_hours": 24
+    }
+    
+    if loc.get("configured") is True:
+        user_lat = math.radians(float(loc.get("latitude", 0)))
+        user_lon = math.radians(float(loc.get("longitude", 0)))
+        alt = current_pos["altitude"]
+        visibility_radius = earth_radius_km * math.acos(earth_radius_km / (earth_radius_km + max(alt, 1.0)))
+
+        def distance_km(p):
+            plat = math.radians(float(p["latitude"]))
+            plon = math.radians(float(p["longitude"]))
+            dlat = plat - user_lat
+            dlon = plon - user_lon
+            a = math.sin(dlat / 2)**2 + math.cos(user_lat) * math.cos(plat) * math.sin(dlon / 2)**2
+            return earth_radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1 - a)))
+
+        # Sample future 24h at 120s steps
+        samples = []
+        for step in range(0, 86401, 120):
+            t_sample = now + step
+            p_sample = propagate_tle(tle_data, t_sample)
+            dist = distance_km(p_sample)
+            samples.append((t_sample, dist, dist <= visibility_radius))
+
+        in_pass = False
+        start_t = None
+        best_t = None
+        best_d = None
+        last_t = None
+
+        for t_sample, dist, inside in samples:
+            if inside and not in_pass:
+                in_pass = True
+                start_t = t_sample
+                best_t = t_sample
+                best_d = dist
+                last_t = t_sample
+            elif inside:
+                last_t = t_sample
+                if best_d is None or dist < best_d:
+                    best_d = dist
+                    best_t = t_sample
+            elif in_pass:
+                break
+
+        if in_pass and start_t is not None:
+            end_t = last_t or start_t
+            pass_info.update({
+                "available": True,
+                "current": start_t <= now + 120,
+                "start": start_t,
+                "end": end_t,
+                "closest": best_t or start_t,
+                "countdown": max(0, start_t - now),
+                "duration": max(0, end_t - start_t),
+                "min_distance_km": round(best_d or 0),
+                "radius_km": round(visibility_radius),
+                "horizon_hours": 24
+            })
+
+    output = {
+        "ok": True,
+        "cached": False,
+        "latitude": current_pos["latitude"],
+        "longitude": current_pos["longitude"],
+        "altitude": current_pos["altitude"],
+        "velocity": current_pos["velocity"],
+        "visibility": "daylight",
+        "timestamp": current_pos["timestamp"],
+        "orbit": orbit_points,
+        "next_pass": pass_info,
+        "tle_info": tle_info
+    }
+    print(json.dumps(output, separators=(",", ":")))
+else:
+    print("")
+PY
+  )
+fi
+
+if [[ -n "$calc_result" ]] && jq -e '.ok == true' >/dev/null 2>&1 <<<"$calc_result"; then
+  atomic_write "$cache_file" "$calc_result" || true
+  next_pass_data="$(jq -c '.next_pass' <<<"$calc_result")"
+  atomic_write "$pass_cache_file" "$next_pass_data" || true
+  with_location "$calc_result" "$next_pass_data"
+  exit 0
+fi
+
+# Fallback to REST API if TLE calculation is unavailable
 raw=""
 if command -v curl >/dev/null 2>&1; then
   raw=$(fetch_json "$api_url" 4)
 fi
 
 if [[ -n "$raw" ]] && jq -e '.latitude and .longitude and .timestamp' >/dev/null 2>&1 <<<"$raw"; then
-  timestamp=$(jq -r '.timestamp | tonumber | floor' <<<"$raw")
-  altitude=$(jq -r '((.altitude // 420) | tonumber)' <<<"$raw")
-  timestamps=""
-  for offset in -2700 -2400 -2100 -1800 -1500 -1200 -900 -600 -300 0 300 600 900 1200 1500 1800 2100 2400 2700; do
-    stamp=$((timestamp + offset))
-    if [[ -n "$timestamps" ]]; then timestamps+=","; fi
-    timestamps+="$stamp"
-  done
-
-  orbit_raw=""
-  if command -v curl >/dev/null 2>&1; then
-    orbit_raw=$(fetch_json "$api_url/positions?timestamps=$timestamps" 4)
-  fi
-
-  if [[ -n "$orbit_raw" ]] && jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<<"$orbit_raw"; then
-    orbit=$(jq -c --argjson max_points "$max_orbit_points" '[.[:$max_points][] | {latitude: (.latitude | tonumber), longitude: (.longitude | tonumber), timestamp: (.timestamp | tonumber)}]' <<<"$orbit_raw")
-  else
-    orbit="[]"
-  fi
-
-  payload=$(jq -c --argjson orbit "$orbit" '{
+  payload=$(jq -c '{
     ok: true,
     cached: false,
     latitude: (.latitude | tonumber),
@@ -296,19 +409,18 @@ if [[ -n "$raw" ]] && jq -e '.latitude and .longitude and .timestamp' >/dev/null
     velocity: ((.velocity // 0) | tonumber),
     visibility: (.visibility // "unknown"),
     timestamp: (.timestamp | tonumber),
-    orbit: $orbit
+    orbit: [],
+    tle_info: {available: false, age_days: 0, stale: false, warning: ""}
   }' <<<"$raw")
-  next_pass="$(predict_next_pass "$timestamp" "$altitude")"
-  printf '%s\n' "$payload" > "$cache_file"
-  with_location "$payload" "$next_pass"
+  atomic_write "$cache_file" "$payload" || true
+  with_location "$payload" "$empty_pass"
   exit 0
 fi
 
-if file_within_limit "$cache_file"; then
-  cached_payload="$(jq -c '. + {cached: true}' "$cache_file")"
-  cached_timestamp="$(jq -r '((.timestamp // 0) | tonumber | floor)' <<<"$cached_payload")"
-  cached_altitude="$(jq -r '((.altitude // 420) | tonumber)' <<<"$cached_payload")"
-  with_location "$cached_payload" "$(predict_next_pass "$cached_timestamp" "$cached_altitude")"
+cache_content=""
+if cache_content=$(read_safe_file "$cache_file"); then
+  cached_payload="$(jq -c '. + {cached: true}' <<<"$cache_content")"
+  with_location "$cached_payload" "$empty_pass"
   exit 0
 fi
 
@@ -321,5 +433,6 @@ with_location "$(jq -cn '{
   velocity: 0,
   visibility: "offline",
   timestamp: 0,
-  orbit: []
+  orbit: [],
+  tle_info: {available: false, age_days: 0, stale: false, warning: ""}
 }')"
