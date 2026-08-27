@@ -70,11 +70,36 @@ emit_json() {
 read_safe_file() {
   local path="$1"
   local max_bytes="${2:-$max_stdout_bytes}"
-  [[ -f "$path" && ! -L "$path" ]] || return 1
-  local size
-  size=$(wc -c < "$path" 2>/dev/null || printf '%s' 0)
-  ((size > 0 && size <= max_bytes)) || return 1
-  cat "$path" 2>/dev/null
+  python3 -c '
+import sys, os, stat
+path = sys.argv[1]
+max_b = int(sys.argv[2])
+expected_uid = int(sys.argv[3])
+try:
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    fd = os.open(path, flags)
+except OSError:
+    sys.exit(1)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != expected_uid:
+        sys.exit(1)
+    if st.st_size <= 0 or st.st_size > max_b:
+        sys.exit(1)
+    data = b""
+    while len(data) < max_b:
+        chunk = os.read(fd, min(65536, max_b - len(data)))
+        if not chunk:
+            break
+        data += chunk
+    sys.stdout.buffer.write(data)
+except Exception:
+    sys.exit(1)
+finally:
+    os.close(fd)
+' "$path" "$max_bytes" "$uid" 2>/dev/null
 }
 
 atomic_write() {
@@ -83,22 +108,33 @@ atomic_write() {
   local target_dir
   target_dir="$(dirname "$target")"
   ensure_secure_dir "$target_dir" || return 1
-  local tmp_file="${target}.tmp.$$"
-  rm -f "$tmp_file" 2>/dev/null || true
-  printf '%s\n' "$content" > "$tmp_file" 2>/dev/null || return 1
+  local tmp_file
+  tmp_file="$(mktemp -p "$target_dir" ".tmp.XXXXXXXXXX" 2>/dev/null)" || return 1
+  if ! printf '%s\n' "$content" > "$tmp_file" 2>/dev/null; then
+    rm -f "$tmp_file" 2>/dev/null || true
+    return 1
+  fi
   chmod 0600 "$tmp_file" 2>/dev/null || true
-  mv -f "$tmp_file" "$target" 2>/dev/null || { rm -f "$tmp_file" 2>/dev/null; return 1; }
+  mv -f "$tmp_file" "$target" 2>/dev/null || { rm -f "$tmp_file" 2>/dev/null || true; return 1; }
 }
 
 read_location() {
   local content
   if content=$(read_safe_file "$config_file" 65536); then
-    jq -c '{
-      configured: (.configured == true),
-      city: (.city // ""),
-      latitude: ((.latitude // 0) | tonumber),
-      longitude: ((.longitude // 0) | tonumber)
-    }' <<<"$content" 2>/dev/null || printf '%s\n' "$empty_location"
+    python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    out = {
+        "configured": d.get("configured") is True,
+        "city": str(d.get("city") or ""),
+        "latitude": float(d.get("latitude") or 0),
+        "longitude": float(d.get("longitude") or 0)
+    }
+    print(json.dumps(out, separators=(",", ":")))
+except Exception:
+    print(sys.argv[1])
+' "$empty_location" <<<"$content" 2>/dev/null || printf '%s\n' "$empty_location"
   else
     printf '%s\n' "$empty_location"
   fi
@@ -108,14 +144,24 @@ fetch_and_save_tle() {
   ensure_secure_dir "$config_dir" || return 1
   local raw
   raw=$(fetch_json "$celestrak_url" 8)
-  if [[ -n "$raw" ]] && jq -e '.[0].EPOCH or .[0].NORAD_CAT_ID == 25544' >/dev/null 2>&1 <<<"$raw"; then
-    local now
-    now="$(date +%s)"
+  if [[ -n "$raw" ]]; then
     local wrapped
-    wrapped=$(jq -c --argjson fetched_at "$now" '{
-      fetched_at: $fetched_at,
-      data: .[0]
-    }' <<<"$raw")
+    wrapped=$(python3 -c '
+import sys, json, time
+try:
+    raw = json.loads(sys.stdin.read())
+    item = raw[0] if isinstance(raw, list) and len(raw) > 0 else raw
+    if "EPOCH" in item or item.get("NORAD_CAT_ID") == 25544:
+        wrapped = {
+            "fetched_at": int(time.time()),
+            "data": item
+        }
+        print(json.dumps(wrapped, separators=(",", ":")))
+        sys.exit(0)
+except Exception:
+    pass
+sys.exit(1)
+' <<<"$raw" 2>/dev/null) || return 1
     atomic_write "$tle_file" "$wrapped" || return 1
     return 0
   fi
@@ -143,10 +189,20 @@ with_location() {
   local next_pass="${2:-$empty_pass}"
   local payload
   loc="$(read_location)"
-  payload="$(jq -c --argjson user_location "$loc" --argjson next_pass "$next_pass" '
-    .orbit = ((.orbit // [])[0:19])
-    | . + {user_location: $user_location, next_pass: $next_pass}
-  ' <<<"$input")"
+  payload="$(python3 -c '
+import sys, json
+try:
+    base = json.loads(sys.argv[1])
+    user_loc = json.loads(sys.argv[2])
+    pass_data = json.loads(sys.argv[3])
+    if "orbit" in base and isinstance(base["orbit"], list):
+        base["orbit"] = base["orbit"][:19]
+    base["user_location"] = user_loc
+    base["next_pass"] = pass_data
+    print(json.dumps(base, separators=(",", ":")))
+except Exception:
+    sys.exit(1)
+' "$input" "$loc" "$next_pass" 2>/dev/null || printf '%s' "$input")"
   emit_json "$payload"
 }
 
@@ -154,7 +210,7 @@ if [[ "${1:-}" == "--clear-city" ]]; then
   ensure_secure_dir "$config_dir" || true
   atomic_write "$config_file" "$empty_location" || true
   atomic_write "$pass_cache_file" "$empty_pass" || true
-  with_location "$(jq -cn '{ok:false,cached:false,latitude:0,longitude:0,altitude:0,velocity:0,visibility:"offline",timestamp:0,orbit:[],tle_info:{available:false,age_days:0,stale:false,warning:""}}')"
+  with_location '{"ok":false,"cached":false,"latitude":0,"longitude":0,"altitude":0,"velocity":0,"visibility":"offline","timestamp":0,"orbit":[],"tle_info":{"available":false,"age_days":0,"stale":false,"warning":""}}'
   exit 0
 fi
 
@@ -165,24 +221,35 @@ if [[ "${1:-}" == "--set-city" ]]; then
     exit 1
   fi
 
-  encoded="$(jq -rn --arg v "$city" '$v|@uri')"
+  encoded="$(python3 -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))' "$city")"
   geo_raw=""
   if command -v curl >/dev/null 2>&1; then
     geo_raw=$(fetch_json "https://geocoding-api.open-meteo.com/v1/search?name=$encoded&count=1&language=en&format=json" 6)
   fi
 
-  if [[ -z "$geo_raw" ]] || ! jq -e '.results[0].latitude and .results[0].longitude' >/dev/null 2>&1 <<<"$geo_raw"; then
+  city_data="$(python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    res = d["results"][0]
+    name = res.get("name", "")
+    cc = res.get("country_code", "")
+    city_name = f"{name}, {cc}" if cc else name
+    out = {
+        "configured": True,
+        "city": city_name,
+        "latitude": float(res.get("latitude", 0)),
+        "longitude": float(res.get("longitude", 0))
+    }
+    print(json.dumps(out, separators=(",", ":")))
+except Exception:
+    sys.exit(1)
+' <<<"$geo_raw" 2>/dev/null)" || {
     echo '{"ok":false,"error":"city not found"}'
     exit 1
-  fi
+  }
 
   ensure_secure_dir "$config_dir" || true
-  city_data=$(jq -c '{
-    configured: true,
-    city: ((.results[0].name // "") + (if (.results[0].country_code // "") != "" then ", " + .results[0].country_code else "" end)),
-    latitude: (.results[0].latitude | tonumber),
-    longitude: (.results[0].longitude | tonumber)
-  }' <<<"$geo_raw")
   atomic_write "$config_file" "$city_data" || true
 fi
 
@@ -216,10 +283,22 @@ tle_info = {
 }
 
 tle_data = None
-if os.path.isfile(tle_path) and not os.path.islink(tle_path):
+try:
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    fd = os.open(tle_path, flags)
     try:
-        with open(tle_path, "r", encoding="utf-8") as fh:
-            wrapped = json.load(fh)
+        import stat
+        st = os.fstat(fd)
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and 0 < st.st_size <= 131072:
+            data = b""
+            while len(data) < 131072:
+                chunk = os.read(fd, min(65536, 131072 - len(data)))
+                if not chunk:
+                    break
+                data += chunk
+            wrapped = json.loads(data.decode("utf-8"))
             fetched_at = int(wrapped.get("fetched_at", 0))
             tle_data = wrapped.get("data", {})
             age_days = (now - fetched_at) / 86400.0 if fetched_at > 0 else 0
@@ -232,8 +311,10 @@ if os.path.isfile(tle_path) and not os.path.islink(tle_path):
                 "stale": is_stale,
                 "warning": warning_msg
             }
-    except Exception:
-        tle_data = None
+    finally:
+        os.close(fd)
+except Exception:
+    tle_data = None
 
 def parse_epoch(epoch_str):
     try:
@@ -385,12 +466,15 @@ PY
   )
 fi
 
-if [[ -n "$calc_result" ]] && jq -e '.ok == true' >/dev/null 2>&1 <<<"$calc_result"; then
-  atomic_write "$cache_file" "$calc_result" || true
-  next_pass_data="$(jq -c '.next_pass' <<<"$calc_result")"
-  atomic_write "$pass_cache_file" "$next_pass_data" || true
-  with_location "$calc_result" "$next_pass_data"
-  exit 0
+if [[ -n "$calc_result" ]]; then
+  is_ok=$(python3 -c 'import sys, json; d=json.loads(sys.stdin.read()); sys.exit(0 if d.get("ok") is True else 1)' <<<"$calc_result" 2>/dev/null && echo "yes" || echo "no")
+  if [[ "$is_ok" == "yes" ]]; then
+    atomic_write "$cache_file" "$calc_result" || true
+    next_pass_data="$(python3 -c 'import sys, json; d=json.loads(sys.stdin.read()); print(json.dumps(d.get("next_pass", {}), separators=(",", ":")))' <<<"$calc_result" 2>/dev/null || printf '%s' "$empty_pass")"
+    atomic_write "$pass_cache_file" "$next_pass_data" || true
+    with_location "$calc_result" "$next_pass_data"
+    exit 0
+  fi
 fi
 
 # Fallback to REST API if TLE calculation is unavailable
@@ -399,40 +483,51 @@ if command -v curl >/dev/null 2>&1; then
   raw=$(fetch_json "$api_url" 4)
 fi
 
-if [[ -n "$raw" ]] && jq -e '.latitude and .longitude and .timestamp' >/dev/null 2>&1 <<<"$raw"; then
-  payload=$(jq -c '{
-    ok: true,
-    cached: false,
-    latitude: (.latitude | tonumber),
-    longitude: (.longitude | tonumber),
-    altitude: ((.altitude // 0) | tonumber),
-    velocity: ((.velocity // 0) | tonumber),
-    visibility: (.visibility // "unknown"),
-    timestamp: (.timestamp | tonumber),
-    orbit: [],
-    tle_info: {available: false, age_days: 0, stale: false, warning: ""}
-  }' <<<"$raw")
-  atomic_write "$cache_file" "$payload" || true
-  with_location "$payload" "$empty_pass"
-  exit 0
+if [[ -n "$raw" ]]; then
+  payload=$(python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    if "latitude" in d and "longitude" in d and "timestamp" in d:
+        out = {
+            "ok": True,
+            "cached": False,
+            "latitude": float(d["latitude"]),
+            "longitude": float(d["longitude"]),
+            "altitude": float(d.get("altitude") or 0),
+            "velocity": float(d.get("velocity") or 0),
+            "visibility": str(d.get("visibility") or "unknown"),
+            "timestamp": int(d["timestamp"]),
+            "orbit": [],
+            "tle_info": {"available": False, "age_days": 0, "stale": False, "warning": ""}
+        }
+        print(json.dumps(out, separators=(",", ":")))
+        sys.exit(0)
+except Exception:
+    pass
+sys.exit(1)
+' <<<"$raw" 2>/dev/null) || payload=""
+
+  if [[ -n "$payload" ]]; then
+    atomic_write "$cache_file" "$payload" || true
+    with_location "$payload" "$empty_pass"
+    exit 0
+  fi
 fi
 
 cache_content=""
 if cache_content=$(read_safe_file "$cache_file"); then
-  cached_payload="$(jq -c '. + {cached: true}' <<<"$cache_content")"
+  cached_payload="$(python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    d["cached"] = True
+    print(json.dumps(d, separators=(",", ":")))
+except Exception:
+    sys.exit(1)
+' <<<"$cache_content" 2>/dev/null || printf '%s' "$cache_content")"
   with_location "$cached_payload" "$empty_pass"
   exit 0
 fi
 
-with_location "$(jq -cn '{
-  ok: false,
-  cached: false,
-  latitude: 0,
-  longitude: 0,
-  altitude: 0,
-  velocity: 0,
-  visibility: "offline",
-  timestamp: 0,
-  orbit: [],
-  tle_info: {available: false, age_days: 0, stale: false, warning: ""}
-}')"
+with_location '{"ok":false,"cached":false,"latitude":0,"longitude":0,"altitude":0,"velocity":0,"visibility":"offline","timestamp":0,"orbit":[],"tle_info":{"available":false,"age_days":0,"stale":false,"warning":""}}'
