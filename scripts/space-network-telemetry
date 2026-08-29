@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Network & S-Meter Hardware Telemetry
+Outputs live S-Meter readouts (S1-S9, S9+10dB, S9+20dB, S9+30dB) for Waybar.
+"""
+import sys, os, subprocess, json
+
+def get_hw_dbm():
+    try:
+        with open("/proc/net/wireless") as f:
+            for line in f:
+                if ":" in line:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        lvl_str = parts[3].rstrip(".")
+                        v = int(float(lvl_str))
+                        if -120 <= v <= 0:
+                            return v
+    except Exception:
+        pass
+    return None
+
+def dbm_to_smeter(dbm):
+    if dbm <= -97:
+        return "S01", "S1", 1
+    elif dbm <= -91:
+        return "S02", "S2", 2
+    elif dbm <= -85:
+        return "S03", "S3", 3
+    elif dbm <= -79:
+        return "S04", "S4", 4
+    elif dbm <= -73:
+        return "S05", "S5", 5
+    elif dbm <= -67:
+        return "S06", "S6", 6
+    elif dbm <= -61:
+        return "S07", "S7", 7
+    elif dbm <= -55:
+        return "S08", "S8", 8
+    elif dbm <= -49:
+        return "S09", "S9", 9
+    elif dbm <= -39:
+        return "+10dB", "S9+10dB", 10
+    elif dbm <= -29:
+        return "+20dB", "S9+20dB", 11
+    elif dbm <= -19:
+        return "+30dB", "S9+30dB", 12
+    else:
+        return "+40dB", "S9+40dB", 13
+
+def pct_to_smeter(pct):
+    if pct <= 0:
+        return "S00", "S0", -100, 0
+    dbm = int((pct * 0.7) - 100)
+    s_compact, s_full, s_val = dbm_to_smeter(dbm)
+    return s_compact, s_full, dbm, s_val
+
+def main():
+    try:
+        # Check active connections via nmcli
+        out = subprocess.run(
+            ["nmcli", "-t", "-f", "TYPE,DEVICE,STATE,NAME", "connection", "show", "--active"],
+            capture_output=True, text=True, timeout=2
+        ).stdout
+
+        active_type = None
+        active_dev = None
+        active_conn = None
+
+        for line in out.strip().splitlines():
+            parts = line.split(":")
+            if len(parts) >= 4 and parts[2] == "activated":
+                if parts[0] in ("802-11-wireless", "wifi"):
+                    active_type = "wifi"
+                    active_dev = parts[1]
+                    active_conn = parts[3]
+                    break
+                elif parts[0] in ("802-3-ethernet", "ethernet"):
+                    active_type = "ethernet"
+                    active_dev = parts[1]
+                    active_conn = parts[3]
+                    break
+
+        if active_type == "ethernet":
+            # Get IP and Gateway
+            ip_str = "Unknown IP"
+            gw_str = "--"
+            if active_dev:
+                dev_out = subprocess.run(
+                    ["nmcli", "-t", "-f", "IP4.ADDRESS,IP4.GATEWAY", "device", "show", active_dev],
+                    capture_output=True, text=True, timeout=1
+                ).stdout
+                for l in dev_out.splitlines():
+                    if l.startswith("IP4.ADDRESS"): ip_str = l.split(":", 1)[1].strip()
+                    elif l.startswith("IP4.GATEWAY"): gw_str = l.split(":", 1)[1].strip()
+
+            text = "ETH: OK  "
+            tooltip = (
+                "🌐 HARDWIRE UMBILICAL (ETHERNET)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• INTERFACE  : {active_dev} ({ip_str})\n"
+                f"• GATEWAY    : {gw_str}\n"
+                f"• CONNECTION : {active_conn}\n"
+                "• Click      : Open Communications Console (SUPER+SHIFT+N)"
+            )
+            data = {"text": text, "tooltip": tooltip, "class": "nominal"}
+
+        elif active_type == "wifi":
+            hw_dbm = get_hw_dbm()
+            sig_pct = 0
+            freq_str = ""
+            rate_str = ""
+            ip_str = ""
+
+            # Check dev wifi
+            wf_out = subprocess.run(
+                ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,FREQ,RATE", "device", "wifi"],
+                capture_output=True, text=True, timeout=1.5
+            ).stdout
+
+            for line in wf_out.splitlines():
+                p = line.strip().split(":")
+                if len(p) >= 5 and p[0] == "*":
+                    if p[2].isdigit():
+                        sig_pct = int(p[2])
+                    freq_str = p[3]
+                    rate_str = p[4]
+                    break
+
+            if active_dev:
+                dev_out = subprocess.run(
+                    ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show", active_dev],
+                    capture_output=True, text=True, timeout=1
+                ).stdout
+                for l in dev_out.splitlines():
+                    if l.startswith("IP4.ADDRESS"):
+                        ip_str = l.split(":", 1)[1].strip()
+                        break
+
+            if hw_dbm is not None:
+                s_compact, s_full, s_idx = dbm_to_smeter(hw_dbm)
+                cur_dbm = hw_dbm
+            else:
+                s_compact, s_full, cur_dbm, s_idx = pct_to_smeter(sig_pct)
+
+            cls = "nominal" if s_idx >= 7 else ("warning" if s_idx >= 4 else "critical")
+            text = f"RF: {s_compact:<5}"
+            tooltip = (
+                "📡 S-BAND RECEIVER TELEMETRY (S-METER)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• S-METER LEVEL : {s_full} / {s_compact} ({cur_dbm} dBm)\n"
+                f"• CARRIER SSID  : {active_conn}\n"
+                f"• FREQUENCY     : {freq_str or '2.4 / 5 GHz'}\n"
+                f"• LINK BITRATE  : {rate_str or '--'}\n"
+                f"• IP ADDRESS    : {ip_str or '--'}\n"
+                "• Click         : Open Communications Console (SUPER+SHIFT+N)"
+            )
+            data = {"text": text, "tooltip": tooltip, "class": cls}
+
+        else:
+            text = "RF: OFF  "
+            tooltip = (
+                "📡 S-BAND RECEIVER OFFLINE\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "• S-METER LEVEL : S00 (No Carrier Detected)\n"
+                "• Status        : Receiver Radio Standby / Disconnected\n"
+                "• Click         : Open Communications Console (SUPER+SHIFT+N)"
+            )
+            data = {"text": text, "tooltip": tooltip, "class": "disconnected"}
+
+        print(json.dumps(data))
+    except Exception as e:
+        print(json.dumps({"text": "RF: OFF  ", "tooltip": f"Error: {e}", "class": "disconnected"}))
+
+if __name__ == "__main__":
+    main()

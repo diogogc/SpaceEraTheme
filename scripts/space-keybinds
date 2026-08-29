@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""
+====================================================================
+ 🧭 SPACE MISSION CONTROL: HYPRLAND KEYBINDINGS GUIDE & LAUNCHER
+====================================================================
+ Interactive searchable flight control cheatsheet.
+ Features:
+   - Ranked priority list (most relevant controls at the top)
+   - Real-time search filter with keyboard navigation
+   - Press [ENTER] to execute any selected tool directly
+   - [ESC] or [Q] instant close
+   - Space Mission Control zero-white-background theme sync
+====================================================================
+"""
+
+import sys
+import os
+import json
+import subprocess
+import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk
+
+KEYBINDINGS = [
+    # Top Priority - Space Mission Telemetry & Flight Consoles
+    {"keys": "SUPER + SPACE",     "desc": "Launch Application (Apollo DSKY AGC)",       "category": "LAUNCHER", "cmd": "dsky-launcher"},
+    {"keys": "SUPER + SHIFT + T", "desc": "Cycle Mission Theme (NASA / CRT / Kosmos)", "category": "THEME",    "cmd": "space-theme-switch next"},
+    {"keys": "SUPER + SHIFT + K", "desc": "Keybinding Guide & Flight Cheatsheet",      "category": "GUIDE",    "cmd": "space-keybinds"},
+    {"keys": "SUPER + SHIFT + N", "desc": "Communications, Wi-Fi & S-Band Radar",     "category": "COMMS",    "cmd": "space-network-dialog"},
+    {"keys": "SUPER + SHIFT + C", "desc": "Telemetry, CPU/MEM & Process Task Abort",   "category": "TELEM",    "cmd": "space-telemetry-dialog"},
+    {"keys": "SUPER + SHIFT + E", "desc": "Energy Telemetry, Profiles & Brightness",   "category": "POWER",    "cmd": "space-energy-dialog"},
+    {"keys": "SUPER + SHIFT + V", "desc": "CAPCOM Audio, Mic Gain & Dual VU Meters",   "category": "AUDIO",    "cmd": "space-capcom-dialog"},
+    {"keys": "SUPER + SHIFT + D", "desc": "Default Applications Manager",              "category": "CONFIG",   "cmd": "space-default-apps"},
+    {"keys": "SUPER + SHIFT + O", "desc": "8-Bit Orbital Screensaver (Instant Play)",   "category": "SAVER",    "cmd": "space-screensaver"},
+    {"keys": "SUPER + L",         "desc": "Lock Screen (Apollo DSKY Security Lock)",    "category": "SECURITY", "cmd": "hyprlock"},
+    {"keys": "SUPER + SHIFT + M", "desc": "Flight Abort / System Power Menu",          "category": "POWER",    "cmd": "space-power-menu"},
+    {"keys": "SUPER + Escape",    "desc": "Flight Abort / System Power Menu (Alt)",     "category": "POWER",    "cmd": "space-power-menu"},
+
+    # Essential Window & App Controls
+    {"keys": "SUPER + T",         "desc": "Open Mission Control Terminal (Kitty)",      "category": "APPS",     "cmd": "kitty"},
+    {"keys": "SUPER + E",         "desc": "Open File Manager",                         "category": "APPS",     "cmd": "thunar"},
+    {"keys": "SUPER + Q",         "desc": "Close / Terminate Active Window",           "category": "WINDOW",   "cmd": "hyprctl dispatch killactive"},
+    {"keys": "SUPER + F",         "desc": "Toggle Fullscreen Window",                  "category": "WINDOW",   "cmd": "hyprctl dispatch fullscreen"},
+    {"keys": "SUPER + V",         "desc": "Toggle Floating Mode",                      "category": "WINDOW",   "cmd": "hyprctl dispatch togglefloating"},
+    {"keys": "SUPER + P",         "desc": "Toggle Pseudo-Tiling Mode",                 "category": "WINDOW",   "cmd": "hyprctl dispatch pseudo"},
+    {"keys": "SUPER + J",         "desc": "Toggle Window Split Orientation",           "category": "WINDOW",   "cmd": "hyprctl dispatch togglesplit"},
+
+    # Navigation & Workspace Management
+    {"keys": "SUPER + [1 - 9]",   "desc": "Switch to Workspace 1 through 9",           "category": "WORKSPACE","cmd": None},
+    {"keys": "SUPER + SHIFT + [1-9]", "desc": "Move Active Window to Workspace 1..9", "category": "WORKSPACE","cmd": None},
+    {"keys": "SUPER + S",         "desc": "Toggle Special Scratchpad Workspace",       "category": "WORKSPACE","cmd": "hyprctl dispatch togglespecialworkspace magic"},
+    {"keys": "SUPER + SHIFT + S", "desc": "Move Active Window to Scratchpad",          "category": "WORKSPACE","cmd": "hyprctl dispatch movetoworkspace special:magic"},
+    {"keys": "SUPER + Arrow Keys","desc": "Move Focus (Left / Right / Up / Down)",      "category": "NAV",      "cmd": None},
+    {"keys": "SUPER + Mouse Drag","desc": "Move (LMB) / Resize (RMB) Floating Window", "category": "NAV",      "cmd": None},
+
+    # Hardware & Audio Keys
+    {"keys": "XF86AudioRaiseVolume", "desc": "Master Audio Volume +5%",                 "category": "HARDWARE", "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"},
+    {"keys": "XF86AudioLowerVolume", "desc": "Master Audio Volume -5%",                 "category": "HARDWARE", "cmd": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"},
+    {"keys": "XF86AudioMute",        "desc": "Toggle Audio Mute",                       "category": "HARDWARE", "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"},
+    {"keys": "XF86AudioMicMute",     "desc": "Toggle Microphone Mute",                  "category": "HARDWARE", "cmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"},
+    {"keys": "XF86MonBrightnessUp",  "desc": "Display Brightness +5%",                  "category": "HARDWARE", "cmd": "brightnessctl -e4 -n2 set 5%+"},
+    {"keys": "XF86MonBrightnessDown","desc": "Display Brightness -5%",                  "category": "HARDWARE", "cmd": "brightnessctl -e4 -n2 set 5%-"},
+]
+
+THEMES = {
+    "nasa": {
+        "bg_chassis": "#0a0d12",
+        "bg_panel": "#12161f",
+        "bg_card": "#0d1118",
+        "bg_input": "#06080b",
+        "bg_selected": "#241e0c",
+        "accent": "#ffb000",
+        "accent_dim": "#8c6200",
+        "text_primary": "#ffb000",
+        "text_secondary": "#c89220",
+        "text_dim": "#705a28",
+        "border_color": "#ffb000",
+        "border_dim": "#263040",
+    },
+    "crt-amber": {
+        "bg_chassis": "#060709",
+        "bg_panel": "#0e1014",
+        "bg_card": "#090b0e",
+        "bg_input": "#030405",
+        "bg_selected": "#261908",
+        "accent": "#ff9e00",
+        "accent_dim": "#7a4c00",
+        "text_primary": "#ff9e00",
+        "text_secondary": "#c77c00",
+        "text_dim": "#734900",
+        "border_color": "#ff9e00",
+        "border_dim": "#402800",
+    },
+    "crt-green": {
+        "bg_chassis": "#040704",
+        "bg_panel": "#0a100a",
+        "bg_card": "#070c07",
+        "bg_input": "#020502",
+        "bg_selected": "#102610",
+        "accent": "#33ff33",
+        "accent_dim": "#156615",
+        "text_primary": "#33ff33",
+        "text_secondary": "#28cc28",
+        "text_dim": "#186618",
+        "border_color": "#33ff33",
+        "border_dim": "#0f3d0f",
+    },
+    "kosmos-vfd": {
+        "bg_chassis": "#07100e",
+        "bg_panel": "#0e1e1a",
+        "bg_card": "#0a1714",
+        "bg_input": "#040b09",
+        "bg_selected": "#173830",
+        "accent": "#00f0d0",
+        "accent_dim": "#006657",
+        "text_primary": "#00f0d0",
+        "text_secondary": "#00bfa5",
+        "text_dim": "#1a5c52",
+        "border_color": "#00f0d0",
+        "border_dim": "#0e3830",
+    },
+}
+
+def get_current_theme():
+    theme_file = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.isfile(theme_file):
+        try:
+            with open(theme_file, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+class KeybindsWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Keybinding Flight Guide")
+        self.set_default_size(780, 520)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+
+        self.theme_name = get_current_theme()
+        self.theme = THEMES.get(self.theme_name, THEMES["nasa"])
+
+        self.apply_theme_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+    def apply_theme_css(self):
+        t = self.theme
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', 'Space Mono', 'Monospace', monospace;
+            text-shadow: none;
+            box-shadow: none;
+        }}
+        window, #main-window {{
+            background-color: {t['bg_chassis']};
+            color: {t['text_primary']};
+            border: 2px solid {t['border_color']};
+            border-radius: 4px;
+        }}
+        .header-panel {{
+            background-color: {t['bg_panel']};
+            border-bottom: 2px solid {t['border_color']};
+            padding: 10px 16px;
+        }}
+        .header-title {{
+            font-size: 13px;
+            font-weight: 900;
+            color: {t['accent']};
+            letter-spacing: 1.5px;
+        }}
+        .header-sub {{
+            font-size: 9px;
+            font-weight: 700;
+            color: {t['text_secondary']};
+        }}
+        entry {{
+            background-color: {t['bg_input']};
+            background-image: none;
+            color: {t['text_primary']};
+            border: 1px solid {t['border_dim']};
+            border-radius: 2px;
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: 700;
+            outline: none;
+        }}
+        entry:focus {{
+            border: 1px solid {t['accent']};
+        }}
+        treeview {{
+            background-color: {t['bg_card']};
+            background-image: none;
+            color: {t['text_primary']};
+            border: 1px solid {t['border_dim']};
+            font-size: 10.5px;
+        }}
+        treeview:selected {{
+            background-color: {t['bg_selected']};
+            color: {t['accent']};
+        }}
+        treeview header button {{
+            background-color: {t['bg_panel']};
+            color: {t['accent']};
+            font-size: 9.5px;
+            font-weight: 800;
+            border: none;
+            border-bottom: 1px solid {t['border_dim']};
+            padding: 4px 6px;
+        }}
+        .badge-cat {{
+            color: {t['text_secondary']};
+            font-size: 9px;
+            font-weight: 800;
+        }}
+        .status-bar {{
+            font-size: 8.5px;
+            color: {t['text_dim']};
+            padding: 6px 14px;
+            background-color: {t['bg_panel']};
+            border-top: 1px solid {t['border_dim']};
+        }}
+        button.close-btn {{
+            background-color: {t['bg_input']};
+            background-image: none;
+            border: 1px solid {t['border_dim']};
+            color: {t['text_secondary']};
+            font-size: 9.5px;
+            font-weight: 800;
+            padding: 4px 8px;
+            border-radius: 2px;
+        }}
+        button.close-btn:hover {{
+            border: 1px solid {t['accent']};
+            color: {t['accent']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+
+    def build_ui(self):
+        self.set_name("main-window")
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(main_box)
+
+        # Header Panel
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-panel")
+
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        title = Gtk.Label(label="🧭 APOLLO FLIGHT DIRECTORY // KEYBINDING GUIDE")
+        title.set_xalign(0.0)
+        title.get_style_context().add_class("header-title")
+        title_box.pack_start(title, True, True, 0)
+
+        btn_close = Gtk.Button(label="[ ESC ]")
+        btn_close.get_style_context().add_class("close-btn")
+        btn_close.connect("clicked", lambda b: self.close_window())
+        title_box.pack_end(btn_close, False, False, 0)
+
+        header.pack_start(title_box, False, False, 0)
+
+        sub = Gtk.Label(label="HYPRLAND MISSION CONTROLS // RANKED BY OPERATIONAL PRIORITY")
+        sub.set_xalign(0.0)
+        sub.get_style_context().add_class("header-sub")
+        header.pack_start(sub, False, False, 0)
+
+        main_box.pack_start(header, False, False, 0)
+
+        # Central Box: Search entry + Scrollable Table
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content_box.set_margin_start(14)
+        content_box.set_margin_end(14)
+        content_box.set_margin_top(10)
+        content_box.set_margin_bottom(10)
+        main_box.pack_start(content_box, True, True, 0)
+
+        # Search Entry
+        self.search_entry = Gtk.Entry()
+        self.search_entry.set_placeholder_text("🔍 Search keybinding, shortcut or command (e.g. theme, audio, window)...")
+        self.search_entry.connect("changed", self.on_search_changed)
+        self.search_entry.connect("activate", self.on_search_activate)
+        content_box.pack_start(self.search_entry, False, False, 0)
+
+        # TreeView List Store: [Keys, Description, Category, Command]
+        self.list_store = Gtk.ListStore(str, str, str, str)
+        self.filter_store = self.list_store.filter_new()
+        self.filter_store.set_visible_func(self.filter_keybindings)
+
+        for item in KEYBINDINGS:
+            self.list_store.append([
+                item["keys"],
+                item["desc"],
+                f"[{item['category']}]",
+                item.get("cmd") or ""
+            ])
+
+        self.tree_view = Gtk.TreeView(model=self.filter_store)
+        self.tree_view.set_headers_visible(True)
+        self.tree_view.connect("row-activated", self.on_row_activated)
+
+        # Column 1: Shortcut Keys
+        renderer_keys = Gtk.CellRendererText()
+        renderer_keys.set_property("weight", 800)
+        renderer_keys.set_property("width", 220)
+        col_keys = Gtk.TreeViewColumn("SHORTCUT KEYS", renderer_keys, text=0)
+        self.tree_view.append_column(col_keys)
+
+        # Column 2: Action Description
+        renderer_desc = Gtk.CellRendererText()
+        col_desc = Gtk.TreeViewColumn("ACTION / TELEMETRY SUBSYSTEM", renderer_desc, text=1)
+        col_desc.set_expand(True)
+        self.tree_view.append_column(col_desc)
+
+        # Column 3: Category Badge
+        renderer_cat = Gtk.CellRendererText()
+        col_cat = Gtk.TreeViewColumn("GROUP", renderer_cat, text=2)
+        col_cat.set_property("alignment", 1.0)
+        self.tree_view.append_column(col_cat)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self.tree_view)
+        content_box.pack_start(scroll, True, True, 0)
+
+        # Footer Status
+        self.lbl_footer = Gtk.Label(label="TYPE TO SEARCH // [ENTER] TO EXECUTE SELECTED ACTION // [ESC] TO EXIT")
+        self.lbl_footer.set_xalign(0.0)
+        self.lbl_footer.get_style_context().add_class("status-bar")
+        main_box.pack_end(self.lbl_footer, False, False, 0)
+
+        # Auto-focus search entry
+        self.search_entry.grab_focus()
+
+    def filter_keybindings(self, model, iter, data):
+        query = self.search_entry.get_text().strip().lower()
+        if not query:
+            return True
+        keys = model.get_value(iter, 0).lower()
+        desc = model.get_value(iter, 1).lower()
+        cat = model.get_value(iter, 2).lower()
+        return query in keys or query in desc or query in cat
+
+    def on_search_changed(self, entry):
+        self.filter_store.refilter()
+        # Auto select first filtered item
+        first_iter = self.filter_store.get_iter_first()
+        if first_iter:
+            self.tree_view.get_selection().select_iter(first_iter)
+
+    def on_search_activate(self, entry):
+        selection = self.tree_view.get_selection()
+        model, iter = selection.get_selected()
+        if iter:
+            self.execute_item(model, iter)
+        else:
+            first_iter = self.filter_store.get_iter_first()
+            if first_iter:
+                self.execute_item(self.filter_store, first_iter)
+
+    def on_row_activated(self, tree_view, path, column):
+        iter = self.filter_store.get_iter(path)
+        if iter:
+            self.execute_item(self.filter_store, iter)
+
+    def execute_item(self, model, iter):
+        cmd = model.get_value(iter, 3)
+        if cmd:
+            self.close_window()
+            subprocess.Popen(cmd, shell=True)
+
+    def on_key_press(self, widget, event):
+        if event.keyval in [Gdk.KEY_Escape, Gdk.KEY_q, Gdk.KEY_Q]:
+            # If search entry has text and ESC is pressed, close window
+            self.close_window()
+            return True
+        elif event.keyval == Gdk.KEY_Down and self.search_entry.is_focus():
+            self.tree_view.grab_focus()
+            return True
+        elif event.keyval == Gdk.KEY_Up and self.tree_view.is_focus():
+            selection = self.tree_view.get_selection()
+            model, iter = selection.get_selected()
+            if iter and model.get_path(iter).get_indices() == [0]:
+                self.search_entry.grab_focus()
+                return True
+        return False
+
+    def close_window(self):
+        Gtk.main_quit()
+
+def main():
+    win = KeybindsWindow()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

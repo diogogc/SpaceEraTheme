@@ -1,0 +1,2507 @@
+#!/usr/bin/env python3
+"""
+====================================================================
+ 🛸 SPACE MISSION CONTROL: 8-BIT MULTI-SCENE RETRO SCREENSAVER
+====================================================================
+ Scenes:
+   1. ARCH ORBITAL: Arch Linux spacecraft orbiting Earth (23° Inclination, CCW)
+   2. NASA MEATBALL: Authentic 2D Pixel-Art NASA Insignia (1:1 Reference Match)
+   3. LUNAR LANDER: Classic Atari/Arcade Moon Landing:
+                    - Gliding entry from left to right & pitch deceleration
+                    - Real-time Apollo 11 1202 & 1201 Guidance Computer Alarms
+                    - Slow, gentle soft touchdown & dust explosion
+                    - Astronaut EVA: Egress, forward moonwalk & flag planting
+                    - Crew Ingress & Ascent Stage Liftoff into lunar orbit!
+ Features:
+   - Automatic 2-minute cycle with clean, smooth Fade-Out / Fade-In transition
+   - Manual instant cycle trigger via [TAB] / [N] / [SPACE]
+   - Nearest-neighbor crisp pixel scaling (480x270 virtual resolution)
+   - Input-wake exit on [ESC] / [Q] / mouse click / mouse movement
+====================================================================
+"""
+
+import sys
+import os
+import math
+import random
+import time
+import zlib
+import base64
+import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+import cairo
+
+# -----------------------------------------------------------------------------
+# Configuration & Virtual Resolution
+# -----------------------------------------------------------------------------
+VIRTUAL_WIDTH = 480
+VIRTUAL_HEIGHT = 270
+FPS = 60
+SCENE_DURATION = 120.0       # 2 minutes per scene
+TRANSITION_DURATION = 1.4    # 1.4s Smooth Fade Out / Fade In
+
+# Arch Linux Palette
+ARCH_CYAN_LIGHT = (0.20, 0.67, 0.87)   # #33aadd
+ARCH_CYAN_MAIN  = (0.09, 0.58, 0.82)   # #1793d1
+ARCH_DARK_BLUE  = (0.10, 0.16, 0.22)   # #1a2938
+ARCH_DARK_HULL  = (0.18, 0.24, 0.31)   # #2e3d4f
+ARCH_WHITE      = (0.95, 0.98, 1.00)   # #f2faff
+ENGINE_GLOW     = (0.35, 0.85, 1.00)   # #59d9ff
+ENGINE_ORANGE   = (1.00, 0.65, 0.15)   # #ffa626
+
+# Earth Palette
+OCEAN_DEEP    = (0.04, 0.14, 0.27)
+OCEAN_MID     = (0.07, 0.25, 0.45)
+OCEAN_COAST   = (0.11, 0.42, 0.59)
+LAND_FOREST   = (0.18, 0.42, 0.31)
+LAND_MID      = (0.25, 0.57, 0.42)
+LAND_HIGH     = (0.32, 0.70, 0.53)
+CLOUD_WHITE   = (0.94, 0.96, 0.99)
+CLOUD_SHADOW  = (0.60, 0.68, 0.76)
+ATMOS_GLOW    = (0.15, 0.55, 0.85)
+
+# NASA Insignia Palette
+NASA_BLUE       = (0.176, 0.365, 0.667)  # #2d5caa
+NASA_RED        = (0.902, 0.169, 0.078)  # #e62b14
+NASA_WHITE      = (1.000, 1.000, 1.000)
+
+# Lunar Lander Palette (Retro Vector / 1979 Arcade Aesthetic)
+LUNAR_WHITE     = (0.950, 0.980, 1.000)  # Vector White
+LUNAR_GRAY_LINE = (0.650, 0.700, 0.780)  # Terrain Line
+LUNAR_GRAY_FILL = (0.080, 0.100, 0.140)  # Shaded Moon Rock
+LUNAR_GOLD      = (0.850, 0.680, 0.200)  # Descent Stage Foil
+LUNAR_CYAN      = (0.200, 0.800, 0.950)  # Windows / Radar
+LUNAR_GREEN     = (0.200, 0.950, 0.400)  # Pad Marker / Status
+LUNAR_RED       = (0.950, 0.200, 0.200)  # Flag Red
+FLAG_BLUE       = (0.100, 0.250, 0.650)  # Flag Canton
+ALARM_AMBER     = (1.000, 0.750, 0.100)  # 1201/1202 Alarm Color
+
+# Soviet Space Program & Mission Palette
+SOVIET_RED      = (0.86, 0.12, 0.12)  # #dc1e1e Crimson Red
+SOVIET_GOLD     = (0.96, 0.78, 0.18)  # #f5c72e Gold
+SOVIET_BRONZE   = (0.78, 0.58, 0.10)  # #c7941a Bronze Shadow
+SOVIET_BLUE     = (0.04, 0.09, 0.20)  # #0a1733 Deep Cosmic Blue
+SOVIET_CYAN     = (0.20, 0.90, 0.75)  # #33e6c0 VFD Phosphor Mint
+SOVIET_TEAL     = (0.10, 0.40, 0.50)  # #1a6680 Earth Atmosphere
+SOVIET_EARTH    = (0.06, 0.22, 0.38)  # #0f3861 Earth Ocean
+SOVIET_WHITE    = (0.95, 0.98, 1.00)  # #f2faff Crisp White
+SOVIET_ORANGE   = (1.00, 0.60, 0.15)  # #ff9926 Thruster Flame
+SK1_ORANGE      = (1.00, 0.45, 0.05)  # SK-1 Cosmonaut Suit Orange
+STEPPE_GREEN    = (0.22, 0.48, 0.22)  # Saratov Steppe Green
+STEPPE_DARK     = (0.14, 0.32, 0.15)  # Steppe Shadow / Grass Line
+SKY_BLUE_DAY    = (0.22, 0.50, 0.80)  # Daylight Troposphere
+SKY_BLUE_HIGH   = (0.06, 0.14, 0.32)  # Stratosphere Gradient
+
+# Realistic Curved Earth Palette
+EARTH_OCEAN_DEEP  = (0.04, 0.14, 0.28)
+EARTH_OCEAN_COAST = (0.08, 0.32, 0.48)
+EARTH_LAND_LOW    = (0.14, 0.38, 0.22)
+EARTH_LAND_MID    = (0.22, 0.52, 0.30)
+EARTH_LAND_HIGH   = (0.40, 0.55, 0.30)
+EARTH_DESERT      = (0.50, 0.45, 0.26)
+EARTH_CLOUD_WHITE = (0.95, 0.98, 1.00)
+EARTH_CLOUD_SHADE = (0.60, 0.68, 0.78)
+
+# Exact 128x128 2D Pixel Art NASA Insignia Matrix (Base64 Zlib Compressed)
+NASA_PIXEL_ART_B64 = (
+    "eNrtm12y5CAIhd+zmCzCJfBy9r+TqenOD6AgaNJTU2We+iZdOZ8oSAt33//tte0LYAEsgAWwABbA"
+    "AvgfAYq4fgtQjOs3AJUs5hm26bFPMmwPyg8hbE/Iz8zE9sDoAYxbYRuXR9sCSYTtSevnCCgCUIav"
+    "vn4EIDnuDMGh7wN0LI8JAooADMx9lODS9wAa3nY6HGIgnn4foFaXHyZWItO3AbS+E3iyBFzfBPCn"
+    "XCEgRUARgO6SCxuho28ABNZ8eB4a8tQLxTGfGyGo9DMAqGCQBKBavwngRR1heeQIWvotAD/sIR0Q"
+    "DwJq6ocAvLiHIAAZ+g2AZNwPEZCp/wAAEvIUyIjyo8SE/DMAiMlTKCccGaNJQNTVfwTAeB6RrwAG"
+    "Fxp68lSmAPomgKtOTnb0DID4hpQ+9IMA486O5tjLpW8SxACCJiBb/gcAqOed64cAhgPuXyW48iZB"
+    "EMAzwSHJTHDdLmMAOK/78wnAnjD18+7XCteEqLQxYQEuc3xAi4CE/AeBz4n6DZOZAkXA5+B6QlTr"
+    "Q+vnAIoLIE1AUv9jem6YggqgDACApaFqDgTAsdyYfr1aXgVgznovw0cAwAA+b4cCKEIGlf44QNEA"
+    "RS05rYTT+6ohTAHgBLjDjXoxd0K6/PBhAL7mbYDP8/oFowDlBqAWgCb4PC41ACYBoAAaLn7rMwAe"
+    "swYBSg2A5otZ6DsP8N4AqO/X+qcJ2t9LAvBdTqUF6sUHngBofS8HwJ2+4XFq5+H7pvW9BACx7UUD"
+    "VHuVCD3lBGhlD+Ht+OttDRt+fEveV6H3BNB7dyYfEBuMeINY5d/7KiHQZ6nifgyAvVG94YpLckdE"
+    "S19NwffPCABVmaSXIH+XSSk6LqUOjjd9iNdPjFHaWe80QH/w3AQ2bK6MtIkaSgkTeLQYAvgcIQQP"
+    "oBGbqxTAcYQRA+gsVWSqJ5usYUXlA0eH6mjZB7iOcKLDd3+s8iTIj8M3QLhSee98MYKefuyUTB5B"
+    "9OoVaBzsxwH23vh1Fa23CtEpIWYAxOJHE8EqK2aq56ZDKeeDZQSkyvkmALrOb8/CHMAeDj7mKkCi"
+    "jO0C3KlQoehW1apuZTso3OUf0EaJBcFI2Q45feF5Z46+zwBI/ViNDIi6YLR02x2/W8oe66KJ60Mj"
+    "JJuK+uX74Pyrw7RwM023gcGYf7QZMhEg1sKhwu/TzUTdJpac/430U/ltPO/r+41MQh+v6LsAUh97"
+    "IgyG9T2Av9VGPqA3xu8BHNXOF6e/CzDe0fdEQyPFU/UJeRtAVptfkzcBqmr3S/IWQKva/oq8AWBV"
+    "+x9XNwDsboMfNbdTrtV3n7rWf1gsgAWwABbAAlgAC+APq2hEjw=="
+)
+
+# Exact 128x128 2D Pixel Art Soviet Space Program / Interkosmos Matrix (Base64 Zlib Compressed)
+SOVIET_PIXEL_ART_B64 = (
+    "eNrtm1uO4yAQRf9ZjDdhR3xGciwh738jE9uYZxXcAtI9owlSt5zE5h4XUDxrmn43qekL8AX41wH07wDs"
+    "V9JR+iGAQ2onAZoolFw9AKAI9P4xgECjCPBOnwBINYoAOIJqkC9XAgc3EoBVKQFgFVK1yGu9UIkonhEA"
+    "mLiDSKtHN8AuUL9SUjqdAHE5h+bO7B8joK5JAR6Xevnki+z3HfWOCvb4yQuvq/vyuHh/pGpknUDV9U+C"
+    "rLKtR7L5X9d0o6gRKEB/J6reJXoi3FdcuywTqELrcwALD+CTXooEWggQ+BS6vUMAgBFUtdtdugCqBFWA"
+    "pRNgaQKoO7677ml/kd2zJgg7DAA43rvt2T8KYM17KRAA1w8AMgKTFAMzRlBd+lcRkASG7iQlAIj+8f4B"
+    "TKBvyC4SAUAMQOq7hrDm+gs7UFNdBRDrWxNQ+jyBGqjvCuGtv/LjFAwAqwCrbwSewJjDAAyBrgBABsi9"
+    "YNAmrD49VCM8opIa4PYrlLh9/6XilAsA+NAzhgge4vVpgiKAselVrYzat/8egLuUInWXeAJQnyRQ2SDs"
+    "AjB0onskzTpAGUAwAiP18i+1zAAUAQHgtMgsol9OEwj0HQEJcBvAWJmFyy1g0NFQqK6fm4AAOISLACGD"
+    "jvSHAJx9OV8EEUMEgOjnZaCoKojo37c5/eez/MSLNoFKZyLh62EIt/5zgVIJ4GAQ2dPf+ewGSL2whgkO"
+    "hKcYQDMAyyI2gX3/J3ozBGBkBIe+GQlgBPXwNgB8OwBgRC3BFQB4f7yaq1h9OMOgAmBPRMNjAsD4yQ2U"
+    "X1QBkSdqAHELk7YAwAgSgDpB3gKrCCKAanYe4IVSywAqBLQLKj8jBCjnxrnA0jNSgFJuvA8uYEdzRAiA"
+    "za3UB/AEkSvEAJjcKn0QR0AB1Odkd24vQR/IGCHqkEELkLnV+2CaoKUIKJMigwCSgAHg14Xp7MBBCDmn"
+    "JACidfEXgAAPgnKCOgCQn9bwICwj6AO4jHBkAA8C80l1F8CRIbqDR9fEboAl1J/lBN0A5+PGzGlCCXoB"
+    "zqfn2RAIBMQrJyABJmZ7Lk3zrC3Atr1z3VwqGyIEAGdGtPqtr/WpGiEEFEWCZoA5078QSIbRAK9L3unr"
+    "h0sHwnmRMHDz+AqALrz9thH6EcMjYqABuNlxyQRWntO3CDFDguAB9vIChWb0t6I+yRARBADxor2qLlTP"
+    "mH7MkBrBLzqlGydqqpjglt8eVX3HcFCERgiXWNONG1VZq7/1H5h+CEGuM+8yAP/6An0agtu+U1OhDPzr"
+    "S/UTDGZWxABo3vxSgEfaGvYiQEIwQD8lILaQeQCr/wjsL9e/EBwBsYvO7hmN0g8JJJtW4/QDgjqAJ8j1"
+    "H+3pIkD2DSd31uGtr0emLejKa3vHZz09+951VDoGMDN9liUHsC11OIDGAPwBrsEA3GEeVTrCdj1t3anL"
+    "rfI5/Tk49EYdJlL8ITYLYGgB+HMMMLUA+P8tn+UAbgs5BFjXWKD2mQEAT1Ldu+iNAHwRwGfJdt0NQFVC"
+    "8Wm6jiIgjnc0HOfrqIS9AFMIIG2GDID8TGmrI6IB5Kdqh7rilmO9XwAysKAtdZyujyMnwCFYHG/RGV+Q"
+    "RG7I5IGgHzjCwg8TBOojIiyS2Kq9MERuirtCo2x2IK6mKewLjTNqABgdaVULrUp+/ESsmQDgY9F2EMAP"
+    "xBsWKsEPRVySAP9VzOlfFHX7BfjnAf4AjdDosQ=="
+)
+
+# -----------------------------------------------------------------------------
+# Background Starfield
+# -----------------------------------------------------------------------------
+class Starfield:
+    def __init__(self, count=150):
+        self.stars = []
+        for _ in range(count):
+            x = random.randint(0, VIRTUAL_WIDTH - 1)
+            y = random.randint(0, VIRTUAL_HEIGHT - 1)
+            depth = random.choice([1, 1, 2, 2, 3])
+            twinkle_speed = random.uniform(1.5, 4.5)
+            twinkle_phase = random.uniform(0, math.pi * 2)
+            star_type = random.choice(['dot', 'dot', 'dot', 'cross']) if depth == 3 else 'dot'
+            self.stars.append({
+                'x': x, 'y': y, 'depth': depth,
+                'speed': twinkle_speed, 'phase': twinkle_phase,
+                'type': star_type
+            })
+
+    def draw(self, cr, t):
+        for s in self.stars:
+            brightness = 0.5 + 0.5 * math.sin(t * s['speed'] + s['phase'])
+            b = (0.3 + 0.7 * brightness)
+            if s['depth'] == 1:
+                cr.set_source_rgb(0.5 * b, 0.6 * b, 0.8 * b)
+                cr.rectangle(s['x'], s['y'], 1, 1)
+            elif s['depth'] == 2:
+                cr.set_source_rgb(0.7 * b, 0.85 * b, 1.0 * b)
+                cr.rectangle(s['x'], s['y'], 1, 1)
+            else:
+                cr.set_source_rgb(b, b, b)
+                if s['type'] == 'cross' and brightness > 0.65:
+                    cr.rectangle(s['x'], s['y'], 1, 1)
+                    cr.set_source_rgb(0.4 * b, 0.6 * b, 0.9 * b)
+                    cr.rectangle(s['x'] - 1, s['y'], 1, 1)
+                    cr.rectangle(s['x'] + 1, s['y'], 1, 1)
+                    cr.rectangle(s['x'], s['y'] - 1, 1, 1)
+                    cr.rectangle(s['x'], s['y'] + 1, 1, 1)
+                else:
+                    cr.rectangle(s['x'], s['y'], 1, 1)
+            cr.fill()
+
+# -----------------------------------------------------------------------------
+# Particle System
+# -----------------------------------------------------------------------------
+class ParticleSystem:
+    def __init__(self, max_particles=160):
+        self.particles = []
+        self.max_particles = max_particles
+
+    def emit(self, x, y, z, angle, color_type='cyan', speed_mult=1.0):
+        exhaust_angle = angle + math.pi + random.uniform(-0.35, 0.35)
+        spd = random.uniform(1.2, 3.2) * speed_mult
+        vx = math.cos(exhaust_angle) * spd
+        vy = math.sin(exhaust_angle) * spd
+        self.particles.append({
+            'x': x, 'y': y, 'z': z,
+            'vx': vx, 'vy': vy,
+            'life': 1.0,
+            'decay': random.uniform(0.030, 0.080),
+            'color': color_type
+        })
+        if len(self.particles) > self.max_particles:
+            self.particles.pop(0)
+
+    def update(self):
+        alive = []
+        for p in self.particles:
+            p['x'] += p['vx']
+            p['y'] += p['vy']
+            p['life'] -= p['decay']
+            if p['life'] > 0:
+                alive.append(p)
+        self.particles = alive
+
+    def draw(self, cr, z_filter=None):
+        for p in self.particles:
+            if z_filter == 'behind' and p['z'] >= 0:
+                continue
+            if z_filter == 'front' and p['z'] < 0:
+                continue
+            alpha = max(0.0, min(1.0, p['life']))
+            if p['color'] == 'cyan':
+                cr.set_source_rgba(ENGINE_GLOW[0], ENGINE_GLOW[1], ENGINE_GLOW[2], alpha)
+            elif p['color'] == 'orange':
+                cr.set_source_rgba(ENGINE_ORANGE[0], ENGINE_ORANGE[1], ENGINE_ORANGE[2], alpha * 0.85)
+            elif p['color'] == 'dust':
+                cr.set_source_rgba(0.85, 0.88, 0.92, alpha * 0.6)
+            elif p['color'] == 'blast':
+                cr.set_source_rgba(1.00, 0.80, 0.30, alpha * 0.95)
+            elif p['color'] == 'plasma':
+                cr.set_source_rgba(1.00, 0.40, 0.08, alpha * 0.92)
+            elif p['color'] == 'spark':
+                cr.set_source_rgba(1.00, 0.90, 0.35, alpha * 0.98)
+            elif p['color'] == 'smoke':
+                cr.set_source_rgba(0.65, 0.68, 0.75, alpha * 0.45)
+            else:
+                cr.set_source_rgba(ARCH_WHITE[0], ARCH_WHITE[1], ARCH_WHITE[2], alpha)
+            
+            size = 1 if p['life'] < 0.5 else 2
+            cr.rectangle(int(p['x']), int(p['y']), size, size)
+            cr.fill()
+
+# =============================================================================
+# SCENE 1: ARCH LINUX ORBITAL RECON (Earth-Like Planet, 23° CCW Orbit)
+# =============================================================================
+class EarthPlanet:
+    def __init__(self, radius=62.0):
+        self.radius = radius
+        self.map_w = 240
+        self.map_h = 120
+        self.continent_map, self.cloud_map = self._generate_maps()
+
+    def _generate_maps(self):
+        cont = [[0.0 for _ in range(self.map_w)] for _ in range(self.map_h)]
+        cloud = [[0.0 for _ in range(self.map_w)] for _ in range(self.map_h)]
+        
+        continents = [
+            (45, 50, 32), (130, 55, 42), (195, 45, 36), (85, 95, 24), (145, 25, 18),
+        ]
+        
+        for y in range(self.map_h):
+            lat = (y / self.map_h - 0.5) * math.pi
+            shear = math.sin(lat * 2.5) * 0.65
+            for x in range(self.map_w):
+                v = 0.0
+                for cx, cy, rad in continents:
+                    dx = min(abs(x - cx), self.map_w - abs(x - cx))
+                    dy = y - cy
+                    dist = math.sqrt(dx * dx + dy * dy * 1.5)
+                    if dist < rad:
+                        v += (1.0 - dist / rad) ** 1.3
+                noise = (math.sin(x * 0.16) * math.cos(y * 0.20) + math.sin(x * 0.35 + y * 0.25) * 0.5) * 0.22
+                cont[y][x] = v + noise
+
+                lon = (x / self.map_w) * math.pi * 2
+                wx = lon + math.sin(lon * 2.8 + lat * 2.2) * 0.40
+                wy = lat + math.cos(lon * 2.4 - lat * 2.8) * 0.40
+                n1 = math.sin(wx * 2.6 + shear) * math.cos(wy * 3.4) * 0.5 + 0.5
+                n2 = math.sin(wx * 5.8 - wy * 4.2) * 0.5 + 0.5
+                n3 = math.sin(wx * 12.0 + wy * 9.5) * 0.5 + 0.5
+                fbm = n1 * 0.52 + n2 * 0.34 + n3 * 0.14
+                lat_mod = 0.42 + 0.58 * math.cos(lat * 1.4)
+                cloud[y][x] = fbm * lat_mod
+
+        return cont, cloud
+
+    def draw(self, cr, center_x, center_y, time_sec):
+        r = int(self.radius)
+        r2 = r * r
+        rot_speed = 0.08
+        cloud_speed = 0.115
+
+        sun_angle = math.radians(-35)
+        sun_x = math.cos(sun_angle)
+        sun_y = math.sin(sun_angle)
+        sun_z = 0.65
+
+        # Atmospheric Limb Halo
+        for dy in range(-r - 3, r + 4):
+            for dx in range(-r - 3, r + 4):
+                d2 = dx * dx + dy * dy
+                if r2 < d2 <= (r + 3) * (r + 3):
+                    dot_sun = (dx * sun_x + dy * sun_y) / (r + 3)
+                    if dot_sun > -0.2:
+                        alpha = (1.0 - (math.sqrt(d2) - r) / 3.0) * (dot_sun + 0.2) * 0.65
+                        cr.set_source_rgba(ATMOS_GLOW[0], ATMOS_GLOW[1], ATMOS_GLOW[2], max(0.0, min(0.7, alpha)))
+                        cr.rectangle(center_x + dx, center_y + dy, 1, 1)
+                        cr.fill()
+
+        # Surface & Atmosphere
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                d2 = dx * dx + dy * dy
+                if d2 <= r2:
+                    dz = math.sqrt(r2 - d2)
+                    nx = dx / r
+                    ny = dy / r
+                    nz = dz / r
+
+                    dot = nx * sun_x + ny * sun_y + nz * sun_z
+                    dither = ((dx + dy) % 2) * 0.08 - 0.04
+                    light_factor = max(0.05, min(1.0, (dot + 0.15 + dither) * 1.1))
+
+                    lat = math.asin(max(-1.0, min(1.0, ny)))
+                    map_y = max(0, min(self.map_h - 1, int(((lat / math.pi) + 0.5) * self.map_h)))
+
+                    lon = math.atan2(nx, nz) + (time_sec * rot_speed)
+                    map_x = max(0, min(self.map_w - 1, int(((lon / (math.pi * 2)) % 1.0) * self.map_w)))
+                    terrain_val = self.continent_map[map_y][map_x]
+
+                    cloud_lon = math.atan2(nx, nz) + (time_sec * cloud_speed)
+                    c_x = max(0, min(self.map_w - 1, int(((cloud_lon / (math.pi * 2)) % 1.0) * self.map_w)))
+                    c_density = self.cloud_map[map_y][c_x]
+
+                    is_polar = abs(lat) > 1.22
+
+                    if is_polar:
+                        col = CLOUD_WHITE
+                    elif terrain_val > 0.62:
+                        col = LAND_HIGH if terrain_val > 0.85 else (LAND_MID if terrain_val > 0.72 else LAND_FOREST)
+                    elif terrain_val > 0.50:
+                        col = OCEAN_COAST
+                    elif terrain_val > 0.35:
+                        col = OCEAN_MID
+                    else:
+                        col = OCEAN_DEEP
+
+                    if not is_polar:
+                        if c_density > 0.52:
+                            col = CLOUD_WHITE if light_factor > 0.35 else CLOUD_SHADOW
+                        elif c_density > 0.42:
+                            alpha_c = (c_density - 0.42) / 0.10
+                            cb = CLOUD_WHITE if light_factor > 0.35 else CLOUD_SHADOW
+                            col = (
+                                col[0] * (1.0 - alpha_c) + cb[0] * alpha_c,
+                                col[1] * (1.0 - alpha_c) + cb[1] * alpha_c,
+                                col[2] * (1.0 - alpha_c) + cb[2] * alpha_c,
+                            )
+
+                    cr_col = (col[0] * light_factor, col[1] * light_factor, col[2] * light_factor)
+                    if light_factor < 0.2:
+                        cr_col = (OCEAN_DEEP[0] * 0.4, OCEAN_DEEP[1] * 0.4, OCEAN_DEEP[2] * 0.6)
+
+                    cr.set_source_rgb(cr_col[0], cr_col[1], cr_col[2])
+                    cr.rectangle(center_x + dx, center_y + dy, 1, 1)
+                    cr.fill()
+
+class ArchSpacecraft:
+    SPRITE_MAP = [
+        [0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,2,4,2,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,2,1,2,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,2,1,1,1,2,0,0,0,0,0,0],
+        [0,0,0,0,0,0,2,1,4,1,2,0,0,0,0,0,0],
+        [0,0,0,0,0,2,1,1,4,1,1,2,0,0,0,0,0],
+        [0,0,0,0,0,2,1,1,3,1,1,2,0,0,0,0,0],
+        [0,0,0,0,2,1,1,3,3,3,1,1,2,0,0,0,0],
+        [0,0,0,0,2,1,1,3,0,3,1,1,2,0,0,0,0],
+        [0,0,0,2,1,1,3,0,0,0,3,1,1,2,0,0,0],
+        [0,0,0,2,1,1,3,0,0,0,3,1,1,2,0,0,0],
+        [0,0,2,1,1,3,0,0,0,0,0,3,1,1,2,0,0],
+        [0,0,2,1,1,3,0,0,0,0,0,3,1,1,2,0,0],
+        [0,2,1,1,3,0,0,0,0,0,0,0,3,1,1,2,0],
+        [0,2,1,1,3,0,0,0,0,0,0,0,3,1,1,2,0],
+        [2,1,1,5,0,0,0,0,0,0,0,0,0,5,1,1,2],
+        [2,1,5,5,0,0,0,0,0,0,0,0,0,5,5,1,2],
+        [1,5,5,0,0,0,0,0,0,0,0,0,0,0,5,5,1],
+    ]
+
+    def __init__(self):
+        self.width = len(self.SPRITE_MAP[0])
+        self.height = len(self.SPRITE_MAP)
+        self.origin_x = self.width // 2
+        self.origin_y = self.height // 2
+
+    def draw(self, cr, x, y, angle_rad, scale=1.0, thruster_pulse=1.0):
+        cr.save()
+        cr.translate(int(x), int(y))
+        cr.rotate(angle_rad + math.pi / 2)
+        cr.scale(scale, scale)
+
+        for sy, row in enumerate(self.SPRITE_MAP):
+            for sx, val in enumerate(row):
+                if val == 0:
+                    continue
+                px = sx - self.origin_x
+                py = sy - self.origin_y
+
+                if val == 1:
+                    cr.set_source_rgb(ARCH_CYAN_MAIN[0], ARCH_CYAN_MAIN[1], ARCH_CYAN_MAIN[2])
+                elif val == 2:
+                    cr.set_source_rgb(ARCH_CYAN_LIGHT[0], ARCH_CYAN_LIGHT[1], ARCH_CYAN_LIGHT[2])
+                elif val == 3:
+                    cr.set_source_rgb(ARCH_DARK_HULL[0], ARCH_DARK_HULL[1], ARCH_DARK_HULL[2])
+                elif val == 4:
+                    cr.set_source_rgb(ARCH_WHITE[0], ARCH_WHITE[1], ARCH_WHITE[2])
+                elif val == 5:
+                    cr.set_source_rgb(
+                        min(1.0, ENGINE_GLOW[0] * thruster_pulse),
+                        min(1.0, ENGINE_GLOW[1] * thruster_pulse),
+                        min(1.0, ENGINE_GLOW[2] * thruster_pulse)
+                    )
+                
+                cr.rectangle(px, py, 1, 1)
+                cr.fill()
+
+        if thruster_pulse > 0.3:
+            flame_len = random.randint(2, 5)
+            for ex in [-5, 5]:
+                cr.set_source_rgba(ENGINE_GLOW[0], ENGINE_GLOW[1], ENGINE_GLOW[2], 0.9)
+                cr.rectangle(ex, self.origin_y - 1, 2, flame_len)
+                cr.fill()
+                cr.set_source_rgba(ENGINE_ORANGE[0], ENGINE_ORANGE[1], ENGINE_ORANGE[2], 0.8)
+                cr.rectangle(ex + 0.5, self.origin_y + flame_len - 1, 1, 2)
+                cr.fill()
+
+        cr.restore()
+
+class SceneArchOrbit:
+    def __init__(self):
+        self.planet = EarthPlanet(radius=62.0)
+        self.ship = ArchSpacecraft()
+        self.particles = ParticleSystem(max_particles=80)
+        self.orbit_r = 115.0
+        self.orbit_speed = 0.55
+        self.view_pitch = math.radians(12.0)
+        self.plane_tilt = math.radians(-23.0)
+
+    def on_enter(self):
+        self.particles = ParticleSystem(max_particles=80)
+
+    def compute_orbit_position(self, theta):
+        r = self.orbit_r
+        x3d = r * math.cos(theta)
+        y3d = -r * math.sin(theta) * math.sin(self.view_pitch)
+        z3d = -r * math.sin(theta) * math.cos(self.view_pitch)
+
+        cos_tilt = math.cos(self.plane_tilt)
+        sin_tilt = math.sin(self.plane_tilt)
+
+        proj_x = x3d * cos_tilt - y3d * sin_tilt
+        proj_y = x3d * sin_tilt + y3d * cos_tilt
+
+        dx3d = -r * math.sin(theta)
+        dy3d = -r * math.cos(theta) * math.sin(self.view_pitch)
+
+        vx = dx3d * cos_tilt - dy3d * sin_tilt
+        vy = dx3d * sin_tilt + dy3d * cos_tilt
+        flight_angle = math.atan2(vy, vx)
+
+        return proj_x, proj_y, z3d, flight_angle
+
+    def render(self, cr, t):
+        center_x = VIRTUAL_WIDTH / 2.0
+        center_y = VIRTUAL_HEIGHT / 2.0
+
+        # Draw Trajectory Ring (Dotted)
+        cr.save()
+        cr.set_source_rgba(ARCH_CYAN_MAIN[0], ARCH_CYAN_MAIN[1], ARCH_CYAN_MAIN[2], 0.15)
+        steps = 72
+        for i in range(steps):
+            if i % 2 == 0:
+                continue
+            theta = (i / steps) * math.pi * 2
+            ox, oy, _, _ = self.compute_orbit_position(theta)
+            cr.rectangle(int(center_x + ox), int(center_y + oy), 1, 1)
+            cr.fill()
+        cr.restore()
+
+        # Orbit calculation
+        theta = (t * self.orbit_speed) % (math.pi * 2)
+        proj_x, proj_y, ship_z, flight_angle = self.compute_orbit_position(theta)
+
+        ship_sx = center_x + proj_x
+        ship_sy = center_y + proj_y
+
+        z_norm = ship_z / self.orbit_r
+        ship_scale = 1.0 + (z_norm * 0.28)
+        thruster_pulse = 0.7 + 0.3 * math.sin(t * 25.0)
+
+        if random.random() < 0.85:
+            self.particles.emit(ship_sx, ship_sy, ship_z, flight_angle, color_type='cyan', speed_mult=ship_scale)
+        self.particles.update()
+
+        is_behind = (ship_z < 0)
+
+        if is_behind:
+            self.particles.draw(cr, z_filter='behind')
+            self.ship.draw(cr, ship_sx, ship_sy, flight_angle, scale=ship_scale, thruster_pulse=thruster_pulse)
+            self.planet.draw(cr, center_x, center_y, t)
+            self.particles.draw(cr, z_filter='front')
+        else:
+            self.particles.draw(cr, z_filter='behind')
+            self.planet.draw(cr, center_x, center_y, t)
+            self.particles.draw(cr, z_filter='front')
+            self.ship.draw(cr, ship_sx, ship_sy, flight_angle, scale=ship_scale, thruster_pulse=thruster_pulse)
+
+        # HUD
+        alt_km = 415.0 + 15.0 * math.cos(theta * 2)
+        cr.save()
+        cr.set_source_rgb(ARCH_CYAN_MAIN[0] * 0.85, ARCH_CYAN_MAIN[1] * 0.85, ARCH_CYAN_MAIN[2] * 0.85)
+        cr.select_font_face("Monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(7)
+        cr.move_to(8, 12)
+        cr.show_text(f"MISSION: ARCH ORBITAL // DIR: CCW // INCL: 23.0° // ALT: {alt_km:.0f} KM")
+        cr.move_to(VIRTUAL_WIDTH - 145, 12)
+        cr.show_text("CRAFT: ARCH-1 // SYS: NOMINAL")
+        cr.restore()
+
+# =============================================================================
+# SCENE 2: AUTHENTIC 2D PIXEL-ART OFFICIAL NASA MEATBALL INSIGNIA
+# =============================================================================
+class SceneNasaMeatball:
+    """
+    Renders the exact 2D pixel-art NASA insignia matching the official Reddit design:
+      - 128x128 pixel art matrix
+      - Blue sphere (#2d5caa), red supersonic chevron (#e62b14), white stars, orbit & NASA serif text
+      - Animated twinkling stars & telemetry
+    """
+    def __init__(self):
+        decompressed_text = zlib.decompress(base64.b64decode(NASA_PIXEL_ART_B64.encode('ascii'))).decode('ascii')
+        self.grid = decompressed_text.split('\n')
+        self.grid_h = len(self.grid)
+        self.grid_w = len(self.grid[0])
+        self.pixel_size = 1.35
+
+    def on_enter(self):
+        pass
+
+    def render(self, cr, t):
+        center_x = VIRTUAL_WIDTH / 2.0
+        center_y = VIRTUAL_HEIGHT / 2.0
+
+        total_w = self.grid_w * self.pixel_size
+        total_h = self.grid_h * self.pixel_size
+        start_x = center_x - (total_w / 2.0)
+        start_y = center_y - (total_h / 2.0)
+
+        ps = self.pixel_size
+
+        cr.save()
+        for gy, row in enumerate(self.grid):
+            py = start_y + gy * ps
+            for gx, code in enumerate(row):
+                if code == '.':
+                    continue
+                px = start_x + gx * ps
+
+                if code == 'B':
+                    cr.set_source_rgb(NASA_BLUE[0], NASA_BLUE[1], NASA_BLUE[2])
+                elif code == 'R':
+                    cr.set_source_rgb(NASA_RED[0], NASA_RED[1], NASA_RED[2])
+                elif code == 'W':
+                    is_star = (gy < 40 or gy > 80) and gx < 90
+                    if is_star:
+                        twinkle = 0.8 + 0.2 * math.sin(t * 3.5 + (gx * 7 + gy * 13))
+                        cr.set_source_rgba(1.0, 1.0, 1.0, twinkle)
+                    else:
+                        cr.set_source_rgb(NASA_WHITE[0], NASA_WHITE[1], NASA_WHITE[2])
+                
+                cr.rectangle(px, py, ps + 0.05, ps + 0.05)
+                cr.fill()
+        cr.restore()
+
+        # HUD Telemetry
+        cr.save()
+        cr.set_source_rgb(0.90, 0.90, 0.95)
+        cr.select_font_face("Monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(7)
+        cr.move_to(8, 12)
+        cr.show_text("AGENCY: NATIONAL AERONAUTICS AND SPACE ADMINISTRATION // INSIGNIA: MEATBALL")
+        cr.move_to(VIRTUAL_WIDTH - 140, 12)
+        cr.show_text("SYS: NOMINAL // EST: 1958")
+        cr.restore()
+
+# =============================================================================
+# SCENE 3: RETRO ATARI LUNAR LANDER, ALARMS, EVA & ASCENT STAGE LIFTOFF
+# =============================================================================
+class SceneLunarLander:
+    """
+    Recreates the classic 1979 Atari vector/arcade Lunar Lander game:
+      - Gliding approach across lunar plain (left-to-right), retro-braking & slow touchdown
+      - Authentic Apollo 11 1202 & 1201 AGC Program Alarms simulation
+      - Post-landing EVA: 2 Astronauts egress, plant Apollo flag, and salute
+      - Crew Ingress & Ascent Stage pyrotechnic separation and orbital liftoff!
+    """
+    def __init__(self):
+        self.pad_x1 = 225
+        self.pad_x2 = 285
+        self.pad_y  = 222
+        self.pad_cx = (self.pad_x1 + self.pad_x2) / 2.0
+
+        # Wide Flat Lunar Plain
+        self.terrain = [
+            (0, 208), (40, 198), (85, 215), (130, 222),
+            (self.pad_x1, self.pad_y), (self.pad_x2, self.pad_y),
+            (355, 222), (400, 214), (445, 198), (480, 208)
+        ]
+        self.particles = ParticleSystem(max_particles=90)
+        self.cycle_time = 42.0
+
+    def on_enter(self):
+        self.particles = ParticleSystem(max_particles=90)
+
+    def _draw_terrain(self, cr):
+        """Draws the wide flat vector lunar surface with retro landing pad."""
+        cr.save()
+        # Shaded lunar rock fill
+        cr.set_source_rgb(LUNAR_GRAY_FILL[0], LUNAR_GRAY_FILL[1], LUNAR_GRAY_FILL[2])
+        cr.move_to(self.terrain[0][0], self.terrain[0][1])
+        for pt in self.terrain[1:]:
+            cr.line_to(pt[0], pt[1])
+        cr.line_to(VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+        cr.line_to(0, VIRTUAL_HEIGHT)
+        cr.close_path()
+        cr.fill()
+
+        # Vector line strokes
+        cr.set_source_rgb(LUNAR_GRAY_LINE[0], LUNAR_GRAY_LINE[1], LUNAR_GRAY_LINE[2])
+        cr.set_line_width(1.5)
+        cr.move_to(self.terrain[0][0], self.terrain[0][1])
+        for pt in self.terrain[1:]:
+            cr.line_to(pt[0], pt[1])
+        cr.stroke()
+
+        # Glowing Landing Pad Marker
+        cr.set_source_rgb(LUNAR_GREEN[0], LUNAR_GREEN[1], LUNAR_GREEN[2])
+        cr.set_line_width(2.0)
+        cr.move_to(self.pad_x1, self.pad_y)
+        cr.line_to(self.pad_x2, self.pad_y)
+        cr.stroke()
+
+        # [ 3X ] Pad multiplier text
+        cr.select_font_face("Monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(7)
+        cr.move_to(self.pad_cx - 12, self.pad_y + 11)
+        cr.show_text("[ 3X ]")
+        cr.restore()
+
+    def _draw_descent_stage(self, cr, x, y):
+        """Renders the lower Descent Stage (remains on lunar pad)."""
+        cr.save()
+        cx, cy = int(x), int(y)
+
+        # 1. Landing Gear Legs & Footpads
+        cr.set_source_rgb(LUNAR_GRAY_LINE[0], LUNAR_GRAY_LINE[1], LUNAR_GRAY_LINE[2])
+        cr.set_line_width(1.2)
+        # Left Leg
+        cr.move_to(cx - 6, cy + 4)
+        cr.line_to(cx - 14, cy + 12)
+        cr.move_to(cx - 16, cy + 12)
+        cr.line_to(cx - 12, cy + 12) # Footpad
+        # Right Leg
+        cr.move_to(cx + 6, cy + 4)
+        cr.line_to(cx + 14, cy + 12)
+        cr.move_to(cx + 12, cy + 12)
+        cr.line_to(cx + 16, cy + 12) # Footpad
+        # Struts
+        cr.move_to(cx - 3, cy + 6)
+        cr.line_to(cx - 10, cy + 12)
+        cr.move_to(cx + 3, cy + 6)
+        cr.line_to(cx + 10, cy + 12)
+        cr.stroke()
+
+        # 2. Gold Foil Core
+        cr.set_source_rgb(LUNAR_GOLD[0], LUNAR_GOLD[1], LUNAR_GOLD[2])
+        cr.rectangle(cx - 8, cy - 2, 16, 8)
+        cr.fill()
+        cr.set_source_rgb(LUNAR_WHITE[0], LUNAR_WHITE[1], LUNAR_WHITE[2])
+        cr.set_line_width(1.0)
+        cr.rectangle(cx - 8, cy - 2, 16, 8)
+        cr.stroke()
+
+        # Descent Engine Bell
+        cr.set_source_rgb(LUNAR_GRAY_LINE[0], LUNAR_GRAY_LINE[1], LUNAR_GRAY_LINE[2])
+        cr.move_to(cx - 3, cy + 6)
+        cr.line_to(cx + 3, cy + 6)
+        cr.line_to(cx + 4, cy + 9)
+        cr.line_to(cx - 4, cy + 9)
+        cr.close_path()
+        cr.fill()
+        cr.restore()
+
+    def _draw_ascent_stage(self, cr, x, y, angle=0.0, is_thrusting=False, rcs_dir=0):
+        """Renders the upper Ascent Stage Cabin."""
+        cr.save()
+        cx, cy = int(x), int(y)
+        cr.translate(cx, cy)
+        cr.rotate(angle)
+
+        # Ascent Stage Cabin (Octagonal Vector Shape)
+        cr.set_source_rgb(0.85, 0.88, 0.92)
+        cr.move_to(-6, -2)
+        cr.line_to(-7, -8)
+        cr.line_to(-4, -13)
+        cr.line_to(4, -13)
+        cr.line_to(7, -8)
+        cr.line_to(6, -2)
+        cr.close_path()
+        cr.fill()
+        cr.set_source_rgb(0.12, 0.15, 0.20)
+        cr.set_line_width(1.0)
+        cr.stroke()
+
+        # Triangular Cockpit Windows
+        cr.set_source_rgb(LUNAR_CYAN[0], LUNAR_CYAN[1], LUNAR_CYAN[2])
+        cr.move_to(-5, -9)
+        cr.line_to(-2, -9)
+        cr.line_to(-4, -12)
+        cr.close_path()
+        cr.move_to(2, -9)
+        cr.line_to(5, -9)
+        cr.line_to(4, -12)
+        cr.close_path()
+        cr.fill()
+
+        # Docking tunnel & Antenna
+        cr.set_source_rgb(LUNAR_WHITE[0], LUNAR_WHITE[1], LUNAR_WHITE[2])
+        cr.rectangle(-2, -15, 4, 2)
+        cr.fill()
+        cr.move_to(3, -13)
+        cr.line_to(6, -17) # Rendezvous Radar
+        cr.stroke()
+
+        # Ascent / Main Thruster Flame
+        if is_thrusting:
+            flame_h = random.randint(10, 18)
+            cr.set_source_rgba(ENGINE_ORANGE[0], ENGINE_ORANGE[1], ENGINE_ORANGE[2], 0.9)
+            cr.move_to(-3, 0)
+            cr.line_to(3, 0)
+            cr.line_to(0, flame_h)
+            cr.close_path()
+            cr.fill()
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.95)
+            cr.move_to(-1.5, 0)
+            cr.line_to(1.5, 0)
+            cr.line_to(0, flame_h * 0.6)
+            cr.close_path()
+            cr.fill()
+
+        # RCS Attitude Thruster Puffs
+        if rcs_dir != 0:
+            puff_x = 7 if rcs_dir > 0 else -7
+            cr.set_source_rgba(LUNAR_CYAN[0], LUNAR_CYAN[1], LUNAR_CYAN[2], 0.8)
+            cr.rectangle(puff_x + (2 if rcs_dir > 0 else -4), -9, 2, 2)
+            cr.fill()
+
+        cr.restore()
+
+    def _draw_full_lunar_module(self, cr, x, y, angle=0.0, is_thrusting=False, rcs_dir=0):
+        """Renders the combined Lunar Module (Descent + Ascent Stages)."""
+        cr.save()
+        cx, cy = int(x), int(y)
+        cr.translate(cx, cy)
+        cr.rotate(angle)
+        cr.translate(-cx, -cy)
+
+        self._draw_descent_stage(cr, cx, cy)
+        self._draw_ascent_stage(cr, cx, cy, angle=0.0, is_thrusting=False, rcs_dir=rcs_dir)
+
+        # Descent Engine Flame (under descent stage)
+        if is_thrusting:
+            flame_h = random.randint(10, 18)
+            cr.set_source_rgba(ENGINE_ORANGE[0], ENGINE_ORANGE[1], ENGINE_ORANGE[2], 0.9)
+            cr.move_to(cx - 3, cy + 9)
+            cr.line_to(cx + 3, cy + 9)
+            cr.line_to(cx, cy + 9 + flame_h)
+            cr.close_path()
+            cr.fill()
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.95)
+            cr.move_to(cx - 1.5, cy + 9)
+            cr.line_to(cx + 1.5, cy + 9)
+            cr.line_to(cx, cy + 9 + (flame_h * 0.6))
+            cr.close_path()
+            cr.fill()
+
+        cr.restore()
+
+    def _draw_astronaut(self, cr, x, y, walk_phase=0.0, is_saluting=False, facing=-1):
+        """Renders an 8-bit Apollo Astronaut with facing direction and moonwalk animation."""
+        cr.save()
+        cx, cy = int(x), int(y)
+
+        # 1/6th gravity bounce
+        bob = math.sin(walk_phase * math.pi * 2) * 1.5 if walk_phase > 0 else 0
+        cy_bob = cy - bob
+
+        # Life Support Backpack (PLSS)
+        cr.set_source_rgb(0.75, 0.78, 0.82)
+        if facing < 0:
+            cr.rectangle(cx + 1, cy_bob - 10, 3, 7)
+        else:
+            cr.rectangle(cx - 4, cy_bob - 10, 3, 7)
+        cr.fill()
+
+        # White Spacesuit Torso
+        cr.set_source_rgb(LUNAR_WHITE[0], LUNAR_WHITE[1], LUNAR_WHITE[2])
+        cr.rectangle(cx - 2, cy_bob - 10, 5, 7)
+        cr.fill()
+
+        # Bubble Helmet with Gold Visor
+        cr.set_source_rgb(LUNAR_WHITE[0], LUNAR_WHITE[1], LUNAR_WHITE[2])
+        cr.rectangle(cx - 2, cy_bob - 14, 5, 4)
+        cr.fill()
+        cr.set_source_rgb(LUNAR_GOLD[0], LUNAR_GOLD[1], LUNAR_GOLD[2])
+        if facing < 0:
+            cr.rectangle(cx - 3, cy_bob - 13, 2, 2)
+        else:
+            cr.rectangle(cx + 1, cy_bob - 13, 2, 2)
+        cr.fill()
+
+        # Legs (Walking stride)
+        cr.set_source_rgb(LUNAR_WHITE[0], LUNAR_WHITE[1], LUNAR_WHITE[2])
+        if walk_phase > 0:
+            leg_swing = math.sin(walk_phase * math.pi * 2) * 3
+            cr.move_to(cx - 1, cy_bob - 3)
+            cr.line_to(cx - 1 + (leg_swing * facing), cy)
+            cr.move_to(cx + 1, cy_bob - 3)
+            cr.line_to(cx + 1 - (leg_swing * facing), cy)
+            cr.set_line_width(1.5)
+            cr.stroke()
+        else:
+            cr.rectangle(cx - 2, cy_bob - 3, 2, 3)
+            cr.rectangle(cx + 1, cy_bob - 3, 2, 3)
+            cr.fill()
+
+        # Arm
+        if is_saluting:
+            cr.set_source_rgb(LUNAR_WHITE[0], LUNAR_WHITE[1], LUNAR_WHITE[2])
+            arm_front = cx + (2 * facing)
+            cr.move_to(cx, cy_bob - 8)
+            cr.line_to(arm_front, cy_bob - 11)
+            cr.line_to(arm_front + facing, cy_bob - 13)
+            cr.set_line_width(1.2)
+            cr.stroke()
+
+        cr.restore()
+
+    def _draw_flag(self, cr, x, y, t, unfurl_prog=1.0):
+        """Renders the Apollo Lunar Flag with animated fluttering."""
+        if unfurl_prog <= 0.01:
+            return
+        cr.save()
+        cx, cy = int(x), int(y)
+
+        # Flagpole
+        cr.set_source_rgb(0.85, 0.88, 0.92)
+        cr.set_line_width(1.2)
+        cr.move_to(cx, cy)
+        cr.line_to(cx, cy - 18)
+        cr.move_to(cx, cy - 18)
+        cr.line_to(cx + (14 * unfurl_prog), cy - 18)
+        cr.stroke()
+
+        # Flag Fabric
+        if unfurl_prog > 0.3:
+            fw = int(13 * unfurl_prog)
+            fh = 8
+            fx = cx + 1
+            fy = cy - 18
+
+            for row in range(fh):
+                wave = int(math.sin(t * 5.0 + row * 0.5) * 1.0)
+                col = LUNAR_RED if (row % 2 == 0) else LUNAR_WHITE
+                cr.set_source_rgb(col[0], col[1], col[2])
+                cr.rectangle(fx + wave, fy + row, fw, 1)
+                cr.fill()
+
+            canton_w = min(fw, 6)
+            canton_h = 4
+            cr.set_source_rgb(FLAG_BLUE[0], FLAG_BLUE[1], FLAG_BLUE[2])
+            cr.rectangle(fx, fy, canton_w, canton_h)
+            cr.fill()
+            cr.set_source_rgb(LUNAR_WHITE[0], LUNAR_WHITE[1], LUNAR_WHITE[2])
+            cr.rectangle(fx + 2, fy + 1, 1, 1)
+            cr.rectangle(fx + 4, fy + 2, 1, 1)
+            cr.fill()
+
+        cr.restore()
+
+    def render(self, cr, t):
+        t_seq = t % self.cycle_time
+
+        # ---------------------------------------------------------------------
+        # Complete Apollo 11 Mission Timeline (42.0s Loop):
+        #   0.0 ->  5.0s: High-Speed Glide from Left to Right & 1202 Alarm
+        #   5.0 -> 10.0s: Pitch Braking, Deceleration Burn & 1201 Alarm
+        #  10.0 -> 14.5s: Slow Final Vertical Touchdown
+        #  14.5 -> 17.5s: Touchdown Confirmed & Contact Light
+        #  17.5 -> 22.5s: Astronaut Egress & Moonwalk (Facing Left)
+        #  22.5 -> 28.5s: Flag Planting & Standing Salute
+        #  28.5 -> 34.5s: Crew Return to LM (Ingress, Facing Right)
+        #  34.5 -> 42.0s: Pyrotechnic Staging & Ascent Stage Orbital Liftoff!
+        # ---------------------------------------------------------------------
+        # 1. Draw Flat Lunar Plain
+        self._draw_terrain(cr)
+
+        flag_x = 160
+        flag_y = self.pad_y - 1
+
+        alarm_active = None
+        alarm_text = ""
+
+        if t_seq < 14.5:
+            # -----------------------------------------------------------------
+            # DESCENT & GLIDE PHASE
+            # -----------------------------------------------------------------
+            if t_seq < 5.0:
+                # Phase 1: Gliding across terrain from left to right (X: 10 -> 160)
+                p = t_seq / 5.0
+                lander_x = 15.0 + (160.0 - 15.0) * (p ** 1.1)
+                lander_y = 38.0 + (95.0 - 38.0) * (p ** 1.2)
+                pitch = math.radians(-18.0) # Pitched back to brake forward speed
+                is_thrust = (math.sin(t * 8.0) > -0.3)
+                rcs_dir = 1
+
+                # 1202 Program Alarm Trigger (t = 2.2 -> 4.8)
+                if 2.2 <= t_seq <= 4.8:
+                    alarm_active = "1202"
+                    alarm_text = "PROG ALARM: 1202 // DSKY 12 02 // EXECUTIVE OVERFLOW // HOUSTON: WE'RE GO ON THAT ALARM!"
+
+                alt_ft = int(2800 - p * 1200)
+                v_spd = -int(45 - p * 18)
+                h_spd = int(72 - p * 40)
+                fuel = int(820 - t_seq * 12)
+
+            elif t_seq < 10.0:
+                # Phase 2: Deceleration Burn & Pitch-over to vertical (X: 160 -> 255)
+                p = (t_seq - 5.0) / 5.0
+                lander_x = 160.0 + (self.pad_cx - 160.0) * (1.0 - (1.0 - p) ** 1.8)
+                lander_y = 95.0 + (168.0 - 95.0) * (p ** 1.1)
+                pitch = math.radians(-18.0 * (1.0 - p)) # Smoothly returns to 0
+                is_thrust = True # Continuous heavy braking burn
+                rcs_dir = -1 if math.sin(t * 7.0) > 0.2 else 0
+
+                # 1201 Program Alarm Trigger (t = 6.2 -> 9.0)
+                if 6.2 <= t_seq <= 9.0:
+                    alarm_active = "1201"
+                    alarm_text = "PROG ALARM: 1201 // DSKY 12 01 // VAC AREA OVERFLOW // HOUSTON: 1201 IS GO FOR LANDING!"
+
+                alt_ft = int(1600 - p * 1150)
+                v_spd = -int(27 - p * 18)
+                h_spd = int(32 - p * 28)
+                fuel = int(760 - (t_seq - 5.0) * 16)
+
+            else:
+                # Phase 3: Slow, gentle, cushioned final touchdown (Y: 168 -> pad_y - 12)
+                p = (t_seq - 10.0) / 4.5
+                lander_x = self.pad_cx
+                lander_y = 168.0 + ((self.pad_y - 12) - 168.0) * (1.0 - (1.0 - p) ** 1.4)
+                pitch = 0.0
+                is_thrust = (p < 0.92) and (math.sin(t * 12.0) > -0.1) # Pulsing cushions
+                rcs_dir = 0
+
+                alt_ft = int(450 * (1.0 - p))
+                v_spd = -int(9 * (1.0 - p) + 1)
+                h_spd = int(4 * (1.0 - p))
+                fuel = int(680 - (t_seq - 10.0) * 14)
+
+            # Particles from descent engine
+            if is_thrust and random.random() < 0.8:
+                exhaust_ang = -math.pi / 2.0 + pitch
+                self.particles.emit(lander_x, lander_y + 9, 0, exhaust_ang, color_type='orange')
+
+            self._draw_full_lunar_module(cr, lander_x, lander_y, angle=pitch, is_thrusting=is_thrust, rcs_dir=rcs_dir)
+
+            hud_line1 = f"ALT: {alt_ft:,} FT // V-SPD: {v_spd} FPS // H-SPD: {h_spd} FPS // FUEL: {fuel} LBS"
+            hud_line2 = alarm_text if alarm_active else "STATUS: POWERED DESCENT // P64 APPROACH GUIDANCE ACTIVE"
+
+        elif t_seq < 17.5:
+            # -----------------------------------------------------------------
+            # TOUCHDOWN CONFIRMED
+            # -----------------------------------------------------------------
+            lander_x = self.pad_cx
+            lander_y = self.pad_y - 12
+            self._draw_full_lunar_module(cr, lander_x, lander_y, angle=0.0, is_thrusting=False)
+
+            if t_seq < 16.0:
+                for _ in range(2):
+                    self.particles.emit(lander_x - 12, lander_y + 11, 0, math.pi, color_type='dust')
+                    self.particles.emit(lander_x + 12, lander_y + 11, 0, 0, color_type='dust')
+
+            hud_line1 = "*** TOUCHDOWN CONFIRMED // CONTACT LIGHT *** // TRANQUILITY BASE"
+            hud_line2 = '"HOUSTON, TRANQUILITY BASE HERE. THE EAGLE HAS LANDED."'
+
+        elif t_seq < 22.5:
+            # -----------------------------------------------------------------
+            # ASTRONAUT EGRESS & MOONWALK TO FLAG (Facing Left)
+            # -----------------------------------------------------------------
+            lander_x = self.pad_cx
+            lander_y = self.pad_y - 12
+            self._draw_full_lunar_module(cr, lander_x, lander_y, angle=0.0, is_thrusting=False)
+
+            walk_p = (t_seq - 17.5) / 5.0
+            astro1_x = (lander_x - 8) - (walk_p * 85.0)  # Moves from 247 -> 162
+            astro2_x = (lander_x + 2) - (walk_p * 60.0)  # Moves from 257 -> 197
+            astro_y = self.pad_y - 1
+
+            self._draw_astronaut(cr, astro1_x, astro_y, walk_phase=t_seq * 3.0, facing=-1)
+            self._draw_astronaut(cr, astro2_x, astro_y, walk_phase=t_seq * 2.8, facing=-1)
+
+            hud_line1 = "EVA COMMENCED: NEIL ARMSTRONG & BUZZ ALDRIN // APOLLO 11"
+            hud_line2 = '"THAT\'S ONE SMALL STEP FOR MAN, ONE GIANT LEAP FOR MANKIND."'
+
+        elif t_seq < 28.5:
+            # -----------------------------------------------------------------
+            # FLAG PLANTING & STANDING SALUTE
+            # -----------------------------------------------------------------
+            lander_x = self.pad_cx
+            lander_y = self.pad_y - 12
+            self._draw_full_lunar_module(cr, lander_x, lander_y, angle=0.0, is_thrusting=False)
+
+            unfurl = min(1.0, (t_seq - 22.5) / 1.5)
+            self._draw_flag(cr, flag_x, flag_y, t, unfurl_prog=unfurl)
+
+            # Astronaut 1 salutes facing flag
+            self._draw_astronaut(cr, flag_x + 12, flag_y, walk_phase=0.0, is_saluting=True, facing=-1)
+            # Astronaut 2 stands proud
+            self._draw_astronaut(cr, flag_x + 28, flag_y, walk_phase=0.0, is_saluting=False, facing=-1)
+
+            hud_line1 = "MISSION: APOLLO 11 // TRANQUILITY BASE // LUNAR SURFACE EVA"
+            hud_line2 = '"HERE MEN FROM THE PLANET EARTH FIRST SET FOOT UPON THE MOON"'
+
+        elif t_seq < 34.5:
+            # -----------------------------------------------------------------
+            # CREW RETURN TO LM (INGRESS - Facing Right)
+            # -----------------------------------------------------------------
+            lander_x = self.pad_cx
+            lander_y = self.pad_y - 12
+            self._draw_full_lunar_module(cr, lander_x, lander_y, angle=0.0, is_thrusting=False)
+            self._draw_flag(cr, flag_x, flag_y, t, unfurl_prog=1.0)
+
+            return_p = (t_seq - 28.5) / 5.0
+            astro1_x = (flag_x + 12) + (return_p * 75.0)  # Moves 172 -> 247
+            astro2_x = (flag_x + 28) + (return_p * 60.0)  # Moves 188 -> 248
+            astro_y = self.pad_y - 1
+
+            if return_p < 0.95:
+                self._draw_astronaut(cr, astro1_x, astro_y, walk_phase=t_seq * 3.0, facing=1)
+                self._draw_astronaut(cr, astro2_x, astro_y, walk_phase=t_seq * 2.8, facing=1)
+
+            hud_line1 = "EVA COMPLETED // CREW INGRESS NOMINAL // CABIN REPRESSURIZED"
+            hud_line2 = "STATUS: CHECKLIST COMPLETE // APS ASCENT STAGE READY FOR LAUNCH"
+
+        else:
+            # -----------------------------------------------------------------
+            # ASCENT STAGE LIFTOFF & ORBITAL INSERTION (t = 34.5 -> 42.0)
+            # -----------------------------------------------------------------
+            descent_x = self.pad_cx
+            descent_y = self.pad_y - 12
+            # Lower Descent Stage stays on the moon!
+            self._draw_descent_stage(cr, descent_x, descent_y)
+            self._draw_flag(cr, flag_x, flag_y, t, unfurl_prog=1.0)
+
+            liftoff_p = (t_seq - 34.5) / 7.5
+            ascent_x = descent_x + (liftoff_p ** 1.8) * 160.0
+            ascent_y = (descent_y - 8) - (liftoff_p ** 1.6) * 260.0
+            ascent_pitch = math.radians(15.0 * liftoff_p) # Pitching forward to orbit
+
+            # Pyrotechnic launch blast particles
+            if liftoff_p < 0.25:
+                for _ in range(4):
+                    self.particles.emit(descent_x, descent_y - 2, 0, random.uniform(0, math.pi * 2), color_type='blast')
+            
+            # Continuous ascent engine flame
+            if random.random() < 0.9:
+                self.particles.emit(ascent_x, ascent_y + 4, 0, -math.pi / 2.0 + ascent_pitch, color_type='orange')
+
+            self._draw_ascent_stage(cr, ascent_x, ascent_y, angle=ascent_pitch, is_thrusting=True)
+
+            hud_line1 = "*** ASCENT STAGE LIFTOFF *** // APS IGNITION NOMINAL"
+            hud_line2 = '"EAGLE IS BACK IN LUNAR ORBIT // RENDEZVOUS WITH CSM COLUMBIA"'
+
+        self.particles.update()
+        self.particles.draw(cr)
+
+        # ---------------------------------------------------------------------
+        # Draw Arcade HUD Telemetry
+        # ---------------------------------------------------------------------
+        cr.save()
+        if alarm_active:
+            # Flashing Amber/Yellow Warning Box for 1201/1202 Alarms
+            flash = (int(t * 6.0) % 2 == 0)
+            if flash:
+                cr.set_source_rgb(ALARM_AMBER[0], ALARM_AMBER[1], ALARM_AMBER[2])
+            else:
+                cr.set_source_rgb(1.0, 0.2, 0.2)
+        else:
+            cr.set_source_rgb(LUNAR_GREEN[0], LUNAR_GREEN[1], LUNAR_GREEN[2])
+
+        cr.select_font_face("Monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(7)
+        cr.move_to(8, 12)
+        cr.show_text(hud_line1)
+        cr.move_to(8, 22)
+        cr.show_text(hud_line2)
+        cr.restore()
+
+# =============================================================================
+# SCENE 4: AUTHENTIC 2D PIXEL-ART SOVIET SPACE PROGRAM & INTERKOSMOS INSIGNIA
+# =============================================================================
+class SceneSovietSpaceProgram:
+    """
+    Renders the iconic 2D pixel-art Soviet Space Program / Interkosmos Insignia:
+      - 128x128 pixel art matrix (Red Star with Hammer & Sickle, Earth horizon,
+        white orbit loop with Sputnik, ascending R-7 Vostok rocket, golden wreath,
+        and bold CCCP typography).
+      - Animated twinkling background stars & glowing rocket thruster pulse.
+      - Soviet Space Program telemetry HUD in vintage VFD mint green.
+    """
+    def __init__(self):
+        decompressed_text = zlib.decompress(base64.b64decode(SOVIET_PIXEL_ART_B64.encode('ascii'))).decode('ascii')
+        self.grid = decompressed_text.split('\n')
+        self.grid_h = len(self.grid)
+        self.grid_w = len(self.grid[0])
+        self.pixel_size = 1.35
+
+    def on_enter(self):
+        pass
+
+    def render(self, cr, t):
+        center_x = VIRTUAL_WIDTH / 2.0
+        center_y = VIRTUAL_HEIGHT / 2.0
+
+        total_w = self.grid_w * self.pixel_size
+        total_h = self.grid_h * self.pixel_size
+        start_x = center_x - (total_w / 2.0)
+        start_y = center_y - (total_h / 2.0)
+
+        ps = self.pixel_size
+
+        cr.save()
+        for gy, row in enumerate(self.grid):
+            py = start_y + gy * ps
+            for gx, code in enumerate(row):
+                if code == '.':
+                    continue
+                px = start_x + gx * ps
+
+                if code == 'G':
+                    cr.set_source_rgb(SOVIET_GOLD[0], SOVIET_GOLD[1], SOVIET_GOLD[2])
+                elif code == 'Y':
+                    cr.set_source_rgb(SOVIET_BRONZE[0], SOVIET_BRONZE[1], SOVIET_BRONZE[2])
+                elif code == 'R':
+                    cr.set_source_rgb(SOVIET_RED[0], SOVIET_RED[1], SOVIET_RED[2])
+                elif code == 'D':
+                    cr.set_source_rgb(SOVIET_BLUE[0], SOVIET_BLUE[1], SOVIET_BLUE[2])
+                elif code == 'C':
+                    cr.set_source_rgb(SOVIET_CYAN[0], SOVIET_CYAN[1], SOVIET_CYAN[2])
+                elif code == 'T':
+                    cr.set_source_rgb(SOVIET_TEAL[0], SOVIET_TEAL[1], SOVIET_TEAL[2])
+                elif code == 'E':
+                    cr.set_source_rgb(SOVIET_EARTH[0], SOVIET_EARTH[1], SOVIET_EARTH[2])
+                elif code == 'W':
+                    cr.set_source_rgb(SOVIET_WHITE[0], SOVIET_WHITE[1], SOVIET_WHITE[2])
+                elif code == 'O':
+                    pulse = 0.85 + 0.15 * math.sin(t * 18.0 + (gx * 3 + gy * 7))
+                    cr.set_source_rgb(SOVIET_ORANGE[0] * pulse, SOVIET_ORANGE[1] * pulse, SOVIET_ORANGE[2])
+                elif code == 'S':
+                    twinkle = 0.7 + 0.3 * math.sin(t * 4.0 + (gx * 5 + gy * 11))
+                    cr.set_source_rgba(1.0, 1.0, 1.0, twinkle)
+
+                cr.rectangle(px, py, ps + 0.05, ps + 0.05)
+                cr.fill()
+        cr.restore()
+
+        # Soviet Space Program HUD Telemetry (VFD Phosphor Mint)
+        cr.save()
+        cr.set_source_rgb(SOVIET_CYAN[0], SOVIET_CYAN[1], SOVIET_CYAN[2])
+        cr.select_font_face("Monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(7)
+        cr.move_to(8, 12)
+        cr.show_text("ПРОГРАММА: ИНТЕРКОСМОС // АКАДЕМИЯ НАУК СССР // 1961")
+        cr.move_to(VIRTUAL_WIDTH - 170, 12)
+        cr.show_text("CRAFT: VOSTOK-1 // ПОЕХАЛИ!")
+        cr.restore()
+
+## =============================================================================
+# SCENE 5: VOSTOK 1 YURI GAGARIN MISSION (April 12, 1961)
+# =============================================================================
+class SceneSovietGagarin:
+    """
+    Recreates the historic Vostok 1 Yuri Gagarin Mission (April 12, 1961):
+      1. Baikonur Cosmodrome Liftoff (0-6s): Launch Pad Site No. 1 with gantry retraction,
+         engine ignition, flame trench smoke, and Gagarin's iconic "ПОЕХАЛИ!" call.
+      2. Seamless Atmospheric Ascent to Orbit (6-18s): Dynamic sky darkening (troposphere
+         cyan -> stratosphere indigo -> vacuum black), scaling Earth curvature from flat horizon
+         to orbital limb, Korolev Cross staging, Blok-E sustainer ignition, shroud jettison.
+      3. Earth Orbit & Cosmonaut Observation (18-26s): Spherical Vostok-1 capsule over Earth
+         curvature with authentic continents, islands, and delicate wispy cloud vortices (~22% cover).
+      4. TDU-1 Retro-Fire & Hypersonic Re-entry (26-33s): Braking burn, service module separation,
+         retrograde capsule orientation with detached bow shock, shoulder streamers, and ablative sparks.
+      5. High-Altitude Ejection & Dual Parachutes (33-40s): Ejection at 7 km; capsule orange/white
+         canopy + Gagarin personal white parachute in daylight sky with tiered cumulus clouds.
+      6. Saratov Field Touchdown, Recovery & Salute (40-48s): Scorched capsule in Russian steppe,
+         Gagarin in orange SK-1 suit renders victory salute; ground rescue party and dynamic Mil Mi-4 helicopter.
+    """
+    def __init__(self):
+        self.particles = ParticleSystem(max_particles=240)
+        self.cycle_time = 48.0
+        self.pad_cx = 240
+        self.pad_ground_y = 220
+        self.earth_map_w = 320
+        self.earth_map_h = 160
+        self._generate_earth_textures()
+
+    def on_enter(self):
+        self.particles = ParticleSystem(max_particles=240)
+
+    def _generate_earth_textures(self):
+        """Generates realistic procedural landmasses and delicate, wispy cloud vortices (approx 22% cloud cover)."""
+        w, h = self.earth_map_w, self.earth_map_h
+        self.land_grid = [[0.0 for _ in range(w)] for _ in range(h)]
+        self.cloud_grid = [[0.0 for _ in range(w)] for _ in range(h)]
+
+        continents = [
+            (80, 75, 48, 1.25),  # Europe & Mediterranean
+            (150, 70, 65, 1.45), # Central Asia & Russia
+            (230, 65, 55, 1.35), # Siberia & East Asia
+            (90, 125, 42, 1.05), # North Africa & Arabia
+            (180, 115, 38, 0.95),# South Asia / India
+        ]
+
+        for y in range(h):
+            lat = (y / h - 0.5) * math.pi
+            for x in range(w):
+                v = 0.0
+                for cx, cy, rad, weight in continents:
+                    dx = min(abs(x - cx), w - abs(x - cx))
+                    dy = y - cy
+                    dist = math.sqrt(dx * dx + dy * dy * 1.6)
+                    if dist < rad:
+                        v += ((1.0 - dist / rad) ** 1.3) * weight
+                n1 = math.sin(x * 0.12) * math.cos(y * 0.15) * 0.35
+                n2 = math.sin(x * 0.28 + y * 0.20) * 0.18
+                n3 = math.sin(x * 0.65 - y * 0.45) * 0.08
+                self.land_grid[y][x] = max(0.0, v + n1 + n2 + n3)
+
+                # Atmospheric swirling cloud vortices (tuned for delicate ~22% coverage)
+                lon = (x / w) * math.pi * 2
+                wx = lon + math.sin(lon * 2.5 + lat * 2.0) * 0.50
+                wy = lat + math.cos(lon * 2.2 - lat * 2.5) * 0.45
+                c1 = math.sin(wx * 3.2 + lat * 0.5) * math.cos(wy * 3.8) * 0.5 + 0.5
+                c2 = math.sin(wx * 7.5 - wy * 5.2) * 0.5 + 0.5
+                c3 = math.sin(wx * 15.0 + wy * 11.0) * 0.5 + 0.5
+                fbm = c1 * 0.50 + c2 * 0.35 + c3 * 0.15
+                self.cloud_grid[y][x] = fbm
+
+    def _draw_launch_pad(self, cr, gantry_retract_prog=0.0, is_ignited=False, ground_offset_y=0.0):
+        cr.save()
+        pad_x = self.pad_cx
+        gy = self.pad_ground_y + ground_offset_y
+
+        cr.set_source_rgb(0.10, 0.12, 0.14)
+        cr.rectangle(0, gy, VIRTUAL_WIDTH, VIRTUAL_HEIGHT - gy + 20)
+        cr.fill()
+
+        cr.set_source_rgb(0.24, 0.26, 0.30)
+        cr.rectangle(pad_x - 50, gy - 6, 100, 8)
+        cr.fill()
+        cr.set_source_rgb(0.14, 0.16, 0.20)
+        cr.rectangle(pad_x - 32, gy + 2, 64, 25)
+        cr.fill()
+
+        cr.set_source_rgb(0.35, 0.38, 0.44)
+        cr.set_line_width(1.0)
+        for tx in [-42, -22, 22, 42]:
+            cr.move_to(pad_x + tx, gy - 6)
+            cr.line_to(pad_x + tx * 0.7, gy + 14)
+            cr.stroke()
+
+        arm_ang = gantry_retract_prog * math.radians(36.0)
+
+        # Left Gantry Arm
+        cr.save()
+        cr.translate(pad_x - 28, gy - 6)
+        cr.rotate(-arm_ang)
+        cr.set_source_rgb(0.40, 0.44, 0.50)
+        cr.rectangle(-3, -80, 6, 80)
+        cr.fill()
+        cr.set_source_rgb(0.55, 0.58, 0.65)
+        for step in range(7):
+            sy = -75 + step * 11
+            cr.move_to(-3, sy)
+            cr.line_to(3, sy + 9)
+            cr.move_to(3, sy)
+            cr.line_to(-3, sy + 9)
+        cr.stroke()
+        cr.set_source_rgb(0.48, 0.52, 0.60)
+        cr.rectangle(0, -72, 18, 4)
+        cr.fill()
+        cr.restore()
+
+        # Right Gantry Arm
+        cr.save()
+        cr.translate(pad_x + 28, gy - 6)
+        cr.rotate(arm_ang)
+        cr.set_source_rgb(0.40, 0.44, 0.50)
+        cr.rectangle(-3, -80, 6, 80)
+        cr.fill()
+        cr.set_source_rgb(0.55, 0.58, 0.65)
+        for step in range(7):
+            sy = -75 + step * 11
+            cr.move_to(-3, sy)
+            cr.line_to(3, sy + 9)
+            cr.move_to(3, sy)
+            cr.line_to(-3, sy + 9)
+        cr.stroke()
+        cr.restore()
+
+        if is_ignited:
+            cr.set_source_rgba(1.0, 0.55, 0.10, 0.85)
+            cr.rectangle(pad_x - 28, gy + 4, 56, 12)
+            cr.fill()
+            cr.set_source_rgba(1.0, 0.90, 0.40, 0.95)
+            cr.rectangle(pad_x - 14, gy + 4, 28, 8)
+            cr.fill()
+
+        cr.restore()
+
+    def _draw_r7_rocket(self, cr, x, y, angle=0.0, scale=1.0, is_thrusting=False, sustainer_only=False, fairing_jettisoned=False):
+        cr.save()
+        cx, cy = int(x), int(y)
+        cr.translate(cx, cy)
+        cr.rotate(angle)
+        cr.scale(scale, scale)
+
+        if not sustainer_only:
+            # Left Boosters
+            cr.set_source_rgb(0.70, 0.74, 0.76)
+            cr.move_to(-3, -14)
+            cr.line_to(-9, 14)
+            cr.line_to(-4, 14)
+            cr.line_to(-3, 0)
+            cr.close_path()
+            cr.fill()
+            cr.set_source_rgb(0.28, 0.36, 0.28)
+            cr.rectangle(-8, 6, 5, 4)
+            cr.fill()
+
+            # Right Boosters
+            cr.set_source_rgb(0.70, 0.74, 0.76)
+            cr.move_to(3, -14)
+            cr.line_to(9, 14)
+            cr.line_to(4, 14)
+            cr.line_to(3, 0)
+            cr.close_path()
+            cr.fill()
+            cr.set_source_rgb(0.28, 0.36, 0.28)
+            cr.rectangle(3, 6, 5, 4)
+            cr.fill()
+
+            # Booster Engine Nozzles
+            cr.set_source_rgb(0.30, 0.32, 0.36)
+            for nx in [-7, -5, 5, 7]:
+                cr.rectangle(nx - 1, 14, 2, 2)
+            cr.fill()
+
+        # Sustainer Core (Blok-A)
+        cr.set_source_rgb(0.82, 0.85, 0.88)
+        cr.rectangle(-3, -26, 6, 40)
+        cr.fill()
+        cr.set_source_rgb(0.28, 0.36, 0.28)
+        cr.rectangle(-3, -8, 6, 5)
+        cr.fill()
+
+        # Blok-E Upper Stage
+        cr.set_source_rgb(0.75, 0.78, 0.82)
+        cr.rectangle(-3, -36, 6, 10)
+        cr.fill()
+
+        if not fairing_jettisoned:
+            # Conical Shroud Fairing
+            cr.set_source_rgb(0.92, 0.94, 0.96)
+            cr.move_to(-3, -36)
+            cr.line_to(3, -36)
+            cr.line_to(0, -46)
+            cr.close_path()
+            cr.fill()
+
+            # Red Star
+            cr.set_source_rgb(SOVIET_RED[0], SOVIET_RED[1], SOVIET_RED[2])
+            cr.rectangle(-1, -41, 2, 2)
+            cr.fill()
+        else:
+            # Exposed Vostok 1 craft on top of Blok-E
+            cr.set_source_rgb(0.94, 0.96, 0.98)
+            cr.arc(0, -41, 4.2, 0, math.pi * 2) # Spherical capsule
+            cr.fill()
+            cr.set_source_rgb(SOVIET_GOLD[0], SOVIET_GOLD[1], SOVIET_GOLD[2])
+            cr.rectangle(1, -42, 2, 2) # Porhole
+            cr.fill()
+
+        # Core Nozzles
+        cr.set_source_rgb(0.30, 0.32, 0.36)
+        cr.rectangle(-2, 14, 4, 2)
+        cr.fill()
+
+        if is_thrusting:
+            flame_len = random.randint(16, 28)
+            cr.set_source_rgba(SOVIET_ORANGE[0], SOVIET_ORANGE[1], SOVIET_ORANGE[2], 0.92)
+            if sustainer_only:
+                cr.move_to(-2, 14)
+                cr.line_to(2, 14)
+                cr.line_to(0, 14 + flame_len * 0.7)
+            else:
+                cr.move_to(-8, 15)
+                cr.line_to(8, 15)
+                cr.line_to(0, 15 + flame_len)
+            cr.close_path()
+            cr.fill()
+
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.95)
+            cr.move_to(-2, 15)
+            cr.line_to(2, 15)
+            cr.line_to(0, 15 + (flame_len * 0.5))
+            cr.close_path()
+            cr.fill()
+
+        cr.restore()
+
+    def _draw_korolev_cross(self, cr, cx, cy, angle, sep_prog):
+        cr.save()
+        cr.translate(cx, cy)
+        cr.rotate(angle)
+
+        sep_dist = sep_prog * 40.0
+        booster_rot = sep_prog * math.radians(80.0)
+
+        boosters = [
+            (-sep_dist, sep_dist * 0.35, -booster_rot),
+            (sep_dist, sep_dist * 0.35, booster_rot),
+            (-sep_dist * 0.6, -sep_dist * 0.3, -booster_rot * 0.8),
+            (sep_dist * 0.6, -sep_dist * 0.3, booster_rot * 0.8),
+        ]
+
+        for bx, by, rot in boosters:
+            cr.save()
+            cr.translate(bx, by)
+            cr.rotate(rot)
+            cr.set_source_rgb(0.70, 0.74, 0.76)
+            cr.move_to(0, -14)
+            cr.line_to(-4, 12)
+            cr.line_to(4, 12)
+            cr.close_path()
+            cr.fill()
+            cr.set_source_rgb(0.28, 0.36, 0.28)
+            cr.rectangle(-3, 4, 6, 4)
+            cr.fill()
+            cr.set_source_rgba(0.9, 0.95, 1.0, max(0.0, 0.85 - sep_prog))
+            cr.rectangle(-1, -16, 2, 3)
+            cr.fill()
+            cr.restore()
+
+        cr.restore()
+
+    def _draw_earth_curved_horizon(self, cr, t_norm=0.0, altitude_prog=1.0):
+        """
+        Renders realistic Earth horizon:
+          - altitude_prog: 0.0 (low stratosphere, nearly flat horizon at bottom) -> 1.0 (full high-orbit curvature).
+        """
+        cr.save()
+        earth_cx = VIRTUAL_WIDTH / 2.0
+        
+        # Smoothly transition from flat low-altitude horizon (cy=1100, r=900) to orbital sphere (cy=380, r=250)
+        earth_cy = 1100 - (altitude_prog * 720.0)
+        earth_r  = 900 - (altitude_prog * 650.0)
+
+        cr.save()
+        cr.arc(earth_cx, earth_cy, earth_r, 0, math.pi * 2)
+        cr.clip()
+
+        cr.set_source_rgb(EARTH_OCEAN_DEEP[0], EARTH_OCEAN_DEEP[1], EARTH_OCEAN_DEEP[2])
+        cr.paint()
+
+        step_x = 2
+        step_y = 2
+        min_py = int(max(0, earth_cy - earth_r))
+        for py in range(min_py, 270, step_y):
+            map_y = int(((py - min_py) / max(1.0, (270.0 - min_py))) * (self.earth_map_h - 1))
+            map_y = max(0, min(self.earth_map_h - 1, map_y))
+            for px in range(0, VIRTUAL_WIDTH, step_x):
+                map_x = int(((px / VIRTUAL_WIDTH + t_norm * 0.35) % 1.0) * (self.earth_map_w - 1))
+                land_val = self.land_grid[map_y][map_x]
+
+                if land_val > 0.35:
+                    if land_val > 0.95:
+                        col = EARTH_LAND_HIGH
+                    elif land_val > 0.65:
+                        col = EARTH_LAND_MID
+                    elif land_val > 0.48:
+                        col = EARTH_LAND_LOW
+                    else:
+                        col = EARTH_OCEAN_COAST
+                    cr.set_source_rgb(col[0], col[1], col[2])
+                    cr.rectangle(px, py, step_x, step_y)
+                    cr.fill()
+
+        # Wispy Clouds (approx 22% coverage)
+        for py in range(min_py, 270, step_y):
+            map_y = int(((py - min_py) / max(1.0, (270.0 - min_py))) * (self.earth_map_h - 1))
+            map_y = max(0, min(self.earth_map_h - 1, map_y))
+            for px in range(0, VIRTUAL_WIDTH, step_x):
+                cloud_x = int(((px / VIRTUAL_WIDTH + t_norm * 0.45) % 1.0) * (self.earth_map_w - 1))
+                c_density = self.cloud_grid[map_y][cloud_x]
+
+                if c_density > 0.72:
+                    cr.set_source_rgba(EARTH_CLOUD_WHITE[0], EARTH_CLOUD_WHITE[1], EARTH_CLOUD_WHITE[2], 0.70)
+                    cr.rectangle(px, py, step_x, step_y)
+                    cr.fill()
+                elif c_density > 0.62:
+                    cr.set_source_rgba(EARTH_CLOUD_SHADE[0], EARTH_CLOUD_SHADE[1], EARTH_CLOUD_SHADE[2], 0.35)
+                    cr.rectangle(px, py, step_x, step_y)
+                    cr.fill()
+
+        cr.restore()
+
+        # Atmospheric Limb Halo
+        halo_alpha = min(1.0, altitude_prog * 1.2)
+        cr.set_source_rgba(0.20, 0.90, 0.85, 0.85 * halo_alpha)
+        cr.set_line_width(2.5)
+        cr.arc(earth_cx, earth_cy, earth_r, math.pi * 1.05, math.pi * 1.95)
+        cr.stroke()
+
+        cr.set_source_rgba(0.10, 0.50, 0.75, 0.45 * halo_alpha)
+        cr.set_line_width(6.0)
+        cr.arc(earth_cx, earth_cy, earth_r + 2, math.pi * 1.05, math.pi * 1.95)
+        cr.stroke()
+
+        cr.restore()
+
+    def _draw_vostok_craft(self, cr, x, y, angle=0.0, scale=1.0, has_service=True, is_braking=False):
+        cr.save()
+        cx, cy = int(x), int(y)
+        cr.translate(cx, cy)
+        cr.rotate(angle)
+        cr.scale(scale, scale)
+
+        if has_service:
+            cr.set_source_rgb(0.45, 0.48, 0.54)
+            cr.move_to(-4, 0)
+            cr.line_to(-7, 7)
+            cr.line_to(7, 7)
+            cr.line_to(4, 0)
+            cr.close_path()
+            cr.fill()
+
+            cr.set_source_rgb(0.65, 0.68, 0.72)
+            for rx in [-5, -2, 1, 4]:
+                cr.rectangle(rx, 2, 2, 4)
+            cr.fill()
+
+            cr.set_source_rgb(0.85, 0.88, 0.92)
+            for bx in [-6, -3, 0, 3, 6]:
+                cr.arc(bx, 7, 1.2, 0, math.pi * 2)
+                cr.fill()
+
+            cr.set_source_rgb(0.25, 0.28, 0.32)
+            cr.move_to(-2, 7)
+            cr.line_to(2, 7)
+            cr.line_to(3, 11)
+            cr.line_to(-3, 11)
+            cr.close_path()
+            cr.fill()
+
+            if is_braking:
+                b_flame = random.randint(10, 20)
+                cr.set_source_rgba(SOVIET_ORANGE[0], SOVIET_ORANGE[1], SOVIET_ORANGE[2], 0.95)
+                cr.move_to(-2, 11)
+                cr.line_to(2, 11)
+                cr.line_to(0, 11 + b_flame)
+                cr.close_path()
+                cr.fill()
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.9)
+                cr.move_to(-1, 11)
+                cr.line_to(1, 11)
+                cr.line_to(0, 11 + b_flame * 0.5)
+                cr.close_path()
+                cr.fill()
+
+        sphere_r = 7.5
+        cr.set_source_rgb(0.92, 0.95, 0.98)
+        cr.arc(0, -6, sphere_r, 0, math.pi * 2)
+        cr.fill()
+        cr.set_source_rgb(0.70, 0.74, 0.80)
+        cr.set_line_width(1.0)
+        cr.arc(0, -6, sphere_r, 0, math.pi * 2)
+        cr.stroke()
+
+        cr.set_source_rgb(SOVIET_GOLD[0], SOVIET_GOLD[1], SOVIET_GOLD[2])
+        cr.arc(2, -7, 2.2, 0, math.pi * 2)
+        cr.fill()
+        cr.set_source_rgb(0.1, 0.2, 0.3)
+        cr.arc(2, -7, 1.0, 0, math.pi * 2)
+        cr.fill()
+
+        cr.set_source_rgb(0.75, 0.78, 0.82)
+        cr.arc(-2, -6, 3.2, 0, math.pi * 2)
+        cr.stroke()
+
+        cr.set_source_rgb(0.85, 0.88, 0.92)
+        cr.set_line_width(0.8)
+        cr.move_to(-5, -10)
+        cr.line_to(-13, -16)
+        cr.move_to(5, -10)
+        cr.line_to(13, -16)
+        cr.move_to(0, -13)
+        cr.line_to(0, -22)
+        cr.stroke()
+
+        cr.restore()
+
+    def _draw_reentry_retrograde_capsule(self, cr, x, y, flight_angle, scale=1.2):
+        cr.save()
+        cx, cy = int(x), int(y)
+        cr.translate(cx, cy)
+        cr.rotate(flight_angle)
+        cr.scale(scale, scale)
+
+        sphere_r = 7.5
+
+        # 1. Dual Aerodynamic Boundary Streamers from Upper & Lower Shoulders
+        stream_len = random.randint(28, 42)
+        cr.set_source_rgba(1.0, 0.45, 0.10, 0.55)
+        cr.move_to(0, -sphere_r - 1)
+        cr.curve_to(-stream_len * 0.4, -sphere_r - 3, -stream_len * 0.8, -sphere_r - 6, -stream_len, -sphere_r - 8)
+        cr.line_to(-stream_len * 0.7, -sphere_r - 1)
+        cr.close_path()
+        cr.fill()
+
+        cr.move_to(0, sphere_r + 1)
+        cr.curve_to(-stream_len * 0.4, sphere_r + 3, -stream_len * 0.8, sphere_r + 6, -stream_len, sphere_r + 8)
+        cr.line_to(-stream_len * 0.7, sphere_r + 1)
+        cr.close_path()
+        cr.fill()
+
+        # 2. Scorched / Charred Capsule Body
+        cr.set_source_rgb(0.24, 0.18, 0.15)
+        cr.arc(0, 0, sphere_r, 0, math.pi * 2)
+        cr.fill()
+
+        # 3. Blunt Heavy Heat Shield Base (Leading Face at x > 0)
+        cr.set_source_rgb(0.15, 0.10, 0.08)
+        cr.arc(0, 0, sphere_r, -math.pi * 0.46, math.pi * 0.46)
+        cr.close_path()
+        cr.fill()
+
+        cr.set_source_rgba(1.0, 0.65, 0.15, 0.95)
+        cr.set_line_width(1.8)
+        cr.arc(0, 0, sphere_r, -math.pi * 0.46, math.pi * 0.46)
+        cr.stroke()
+
+        cr.set_source_rgb(0.12, 0.10, 0.10)
+        cr.arc(-3, -2, 2.8, 0, math.pi * 2)
+        cr.stroke()
+
+        # 4. Detached Hypersonic Bow Shock Wave (Forward Arc, x > 0)
+        cr.set_source_rgba(1.0, 0.25, 0.05, 0.88)
+        cr.set_line_width(3.2)
+        cr.arc(0, 0, sphere_r + 3.5, -math.pi * 0.50, math.pi * 0.50)
+        cr.stroke()
+
+        cr.set_source_rgba(1.0, 0.95, 0.45, 0.98)
+        cr.set_line_width(1.5)
+        cr.arc(0, 0, sphere_r + 1.8, -math.pi * 0.42, math.pi * 0.42)
+        cr.stroke()
+
+        cr.restore()
+
+    def _draw_stylized_cumulus_cloud(self, cr, x, y, width=70, height=26, alpha=0.95):
+        cr.save()
+        cx, cy = int(x), int(y)
+        w, h = width, height
+
+        puffs = [
+            (cx - w * 0.35, cy - h * 0.15, h * 0.40),
+            (cx - w * 0.15, cy - h * 0.38, h * 0.55),
+            (cx + w * 0.12, cy - h * 0.48, h * 0.62),
+            (cx + w * 0.32, cy - h * 0.22, h * 0.45),
+        ]
+
+        cr.set_source_rgba(0.96, 0.98, 1.0, alpha)
+        cr.new_path()
+        cr.rectangle(cx - w // 2, cy - h // 4, w, h // 3)
+        for px, py, pr in puffs:
+            cr.arc(px, py, pr, 0, math.pi * 2)
+        cr.fill()
+
+        cr.save()
+        cr.new_path()
+        cr.rectangle(cx - w // 2, cy - h // 4, w, h // 3)
+        for px, py, pr in puffs:
+            cr.arc(px, py, pr, 0, math.pi * 2)
+        cr.clip()
+        
+        cr.set_source_rgba(0.70, 0.78, 0.88, alpha * 0.65)
+        cr.rectangle(cx - w // 2, cy - h // 8, w, h // 2)
+        cr.fill()
+        cr.restore()
+
+        cr.set_source_rgba(1.0, 1.0, 1.0, alpha)
+        cr.set_line_width(1.0)
+        for px, py, pr in puffs:
+            cr.arc(px, py - 1, pr, math.pi * 1.1, math.pi * 1.9)
+            cr.stroke()
+
+        cr.restore()
+
+    def _draw_ejection_and_parachutes(self, cr, cap_x, cap_y, gag_x, gag_y, is_ejected=True):
+        cr.save()
+        cx, cy = int(cap_x), int(cap_y)
+        cr.set_source_rgb(0.30, 0.24, 0.20)
+        cr.arc(cx, cy, 7.5, 0, math.pi * 2)
+        cr.fill()
+        cr.set_source_rgb(0.1, 0.1, 0.12)
+        cr.arc(cx - 2, cy - 1, 3.0, 0, math.pi * 2)
+        cr.fill()
+
+        chute_top_y = cy - 42
+        cr.set_source_rgb(0.85, 0.88, 0.92)
+        cr.set_line_width(0.8)
+        for lx in [-18, -10, -3, 3, 10, 18]:
+            cr.move_to(cx, cy - 7)
+            cr.line_to(cx + lx, chute_top_y + 12)
+        cr.stroke()
+
+        cw = 20
+        for seg in range(6):
+            col = (1.0, 0.40, 0.05) if (seg % 2 == 0) else SOVIET_WHITE
+            cr.set_source_rgb(col[0], col[1], col[2])
+            cr.arc(cx, chute_top_y + 12, cw, math.pi + (seg * math.pi / 6), math.pi + ((seg + 1) * math.pi / 6))
+            cr.line_to(cx, chute_top_y + 12)
+            cr.close_path()
+            cr.fill()
+
+        if is_ejected:
+            gx, gy = int(gag_x), int(gag_y)
+            g_chute_y = gy - 28
+            cr.set_source_rgb(0.85, 0.88, 0.92)
+            cr.set_line_width(0.6)
+            for glx in [-10, -4, 4, 10]:
+                cr.move_to(gx, gy - 6)
+                cr.line_to(gx + glx, g_chute_y + 6)
+            cr.stroke()
+
+            cr.set_source_rgb(SOVIET_WHITE[0], SOVIET_WHITE[1], SOVIET_WHITE[2])
+            cr.arc(gx, g_chute_y + 6, 12, math.pi, math.pi * 2)
+            cr.close_path()
+            cr.fill()
+
+            cr.set_source_rgb(SK1_ORANGE[0], SK1_ORANGE[1], SK1_ORANGE[2])
+            cr.rectangle(gx - 3, gy - 4, 6, 7)
+            cr.fill()
+            cr.rectangle(gx - 3, gy + 3, 2, 4)
+            cr.rectangle(gx + 1, gy + 3, 2, 4)
+            cr.fill()
+            cr.set_source_rgb(SOVIET_WHITE[0], SOVIET_WHITE[1], SOVIET_WHITE[2])
+            cr.arc(gx, gy - 7, 3.2, 0, math.pi * 2)
+            cr.fill()
+            cr.set_source_rgb(SOVIET_GOLD[0], SOVIET_GOLD[1], SOVIET_GOLD[2])
+            cr.rectangle(gx - 1, gy - 8, 2, 2)
+            cr.fill()
+            cr.set_source_rgb(SOVIET_RED[0], SOVIET_RED[1], SOVIET_RED[2])
+            cr.rectangle(gx - 2, gy - 10, 4, 1)
+            cr.fill()
+
+        cr.restore()
+
+    def _draw_saratov_scene(self, cr, t_stage):
+        """Renders Saratov Steppe, Charred Capsule, Gagarin Saluting, Ground Rescue Party, and Dynamic Mil Mi-4 Helicopter."""
+        cr.save()
+        gy = 180
+
+        # Daylight Steppe Sky Gradient
+        cr.set_source_rgb(0.28, 0.58, 0.88)
+        cr.rectangle(0, 0, VIRTUAL_WIDTH, gy)
+        cr.fill()
+
+        self._draw_stylized_cumulus_cloud(cr, 85, 55, width=85, height=32, alpha=0.90)
+        self._draw_stylized_cumulus_cloud(cr, 360, 48, width=105, height=36, alpha=0.90)
+        self._draw_stylized_cumulus_cloud(cr, 220, 80, width=65, height=24, alpha=0.75)
+
+        # Distant Rolling Russian Steppe Hills
+        cr.set_source_rgb(0.18, 0.40, 0.20)
+        cr.move_to(0, gy)
+        cr.curve_to(90, gy - 20, 200, gy - 8, 300, gy - 18)
+        cr.curve_to(370, gy - 24, 430, gy - 10, VIRTUAL_WIDTH, gy - 14)
+        cr.line_to(VIRTUAL_WIDTH, gy)
+        cr.close_path()
+        cr.fill()
+
+        # Soviet Command Gaz-69 Jeep on the Hill line
+        jeep_x, jeep_y = 52, gy - 14
+        cr.set_source_rgb(0.22, 0.30, 0.22) # Olive body
+        cr.rectangle(jeep_x, jeep_y - 6, 16, 6)
+        cr.fill()
+        cr.set_source_rgb(0.40, 0.36, 0.30) # Canvas top
+        cr.rectangle(jeep_x + 3, jeep_y - 11, 10, 5)
+        cr.fill()
+        cr.set_source_rgb(0.1, 0.1, 0.1) # Wheels
+        cr.rectangle(jeep_x + 2, jeep_y, 3, 3)
+        cr.rectangle(jeep_x + 11, jeep_y, 3, 3)
+        cr.fill()
+        # Small Soviet Flag on Jeep
+        cr.set_source_rgb(0.7, 0.7, 0.7)
+        cr.move_to(jeep_x + 15, jeep_y - 6)
+        cr.line_to(jeep_x + 15, jeep_y - 17)
+        cr.stroke()
+        cr.set_source_rgb(SOVIET_RED[0], SOVIET_RED[1], SOVIET_RED[2])
+        cr.rectangle(jeep_x + 15, jeep_y - 17, 6, 4)
+        cr.fill()
+
+        # Volga Meadow Grass Ground
+        cr.set_source_rgb(STEPPE_GREEN[0], STEPPE_GREEN[1], STEPPE_GREEN[2])
+        cr.rectangle(0, gy, VIRTUAL_WIDTH, VIRTUAL_HEIGHT - gy)
+        cr.fill()
+
+        # Meadow Grass Texture Blades
+        cr.set_source_rgb(STEPPE_DARK[0], STEPPE_DARK[1], STEPPE_DARK[2])
+        cr.set_line_width(1.0)
+        for gx in range(8, VIRTUAL_WIDTH - 8, 14):
+            cr.move_to(gx, gy + 12)
+            cr.line_to(gx - 2, gy + 5)
+            cr.move_to(gx + 3, gy + 24)
+            cr.line_to(gx + 5, gy + 16)
+        cr.stroke()
+
+        # 1. Charred Vostok Capsule on the Ground
+        cap_gx = 110
+        cap_gy = gy + 22
+        # Scorched impact crater
+        cr.set_source_rgb(0.16, 0.14, 0.12)
+        cr.arc(cap_gx, cap_gy + 4, 14, 0, math.pi * 2)
+        cr.fill()
+
+        # Deflated Orange/White Parachute Canopy Draped on Meadow
+        cr.set_source_rgb(1.0, 0.40, 0.05)
+        cr.move_to(cap_gx - 8, cap_gy + 2)
+        cr.line_to(cap_gx - 46, cap_gy - 6)
+        cr.line_to(cap_gx - 38, cap_gy + 9)
+        cr.close_path()
+        cr.fill()
+        cr.set_source_rgb(SOVIET_WHITE[0], SOVIET_WHITE[1], SOVIET_WHITE[2])
+        cr.move_to(cap_gx - 22, cap_gy)
+        cr.line_to(cap_gx - 42, cap_gy + 4)
+        cr.line_to(cap_gx - 30, cap_gy + 9)
+        cr.close_path()
+        cr.fill()
+
+        # Scorched Spherical Capsule Body
+        cr.set_source_rgb(0.28, 0.24, 0.22)
+        cr.arc(cap_gx, cap_gy, 9.5, 0, math.pi * 2)
+        cr.fill()
+        cr.set_source_rgb(0.14, 0.12, 0.10)
+        cr.rectangle(cap_gx - 7, cap_gy - 4, 14, 3)
+        cr.fill()
+        cr.set_source_rgb(0.08, 0.08, 0.10)
+        cr.arc(cap_gx + 2, cap_gy - 2, 4.2, 0, math.pi * 2)
+        cr.fill()
+
+        # 2. Cosmonaut Yuri Gagarin Standing & Saluting
+        gag_x = 230
+        gag_y = gy + 25
+
+        cr.set_source_rgba(0.1, 0.2, 0.1, 0.45)
+        cr.arc(gag_x, gag_y + 2, 8, 0, math.pi * 2)
+        cr.fill()
+
+        # Orange SK-1 Suit Torso
+        cr.set_source_rgb(SK1_ORANGE[0], SK1_ORANGE[1], SK1_ORANGE[2])
+        cr.rectangle(gag_x - 4, gag_y - 22, 8, 14)
+        cr.fill()
+
+        # Life Support Unit
+        cr.set_source_rgb(0.85, 0.88, 0.92)
+        cr.rectangle(gag_x - 2, gag_y - 18, 5, 5)
+        cr.fill()
+
+        # Legs & Boots
+        cr.set_source_rgb(SK1_ORANGE[0], SK1_ORANGE[1], SK1_ORANGE[2])
+        cr.rectangle(gag_x - 4, gag_y - 8, 3, 8)
+        cr.rectangle(gag_x + 1, gag_y - 8, 3, 8)
+        cr.fill()
+        cr.set_source_rgb(0.18, 0.20, 0.22)
+        cr.rectangle(gag_x - 5, gag_y, 4, 3)
+        cr.rectangle(gag_x + 1, gag_y, 4, 3)
+        cr.fill()
+
+        # Helmet with "CCCP" Red Typography
+        cr.set_source_rgb(SOVIET_WHITE[0], SOVIET_WHITE[1], SOVIET_WHITE[2])
+        cr.arc(gag_x, gag_y - 28, 5.0, 0, math.pi * 2)
+        cr.fill()
+        cr.set_source_rgb(SOVIET_GOLD[0], SOVIET_GOLD[1], SOVIET_GOLD[2])
+        cr.rectangle(gag_x - 2, gag_y - 29, 4, 3)
+        cr.fill()
+        cr.set_source_rgb(SOVIET_RED[0], SOVIET_RED[1], SOVIET_RED[2])
+        cr.rectangle(gag_x - 3, gag_y - 32, 6, 2)
+        cr.fill()
+
+        # Right Arm Raised in Salute
+        cr.set_source_rgb(SK1_ORANGE[0], SK1_ORANGE[1], SK1_ORANGE[2])
+        cr.set_line_width(2.4)
+        cr.move_to(gag_x + 4, gag_y - 19)
+        cr.line_to(gag_x + 8, gag_y - 25)
+        cr.line_to(gag_x + 3, gag_y - 30)
+        cr.stroke()
+
+        # Left Arm by Side
+        cr.move_to(gag_x - 4, gag_y - 19)
+        cr.line_to(gag_x - 6, gag_y - 10)
+        cr.stroke()
+
+        # 3. Ground Rescue Party (2 Soviet Officers Running Toward Gagarin)
+        run_cycle = math.sin(t_stage * 12.0)
+        officers = [
+            (gag_x - 45 - (1.0 - min(1.0, t_stage * 0.4)) * 30.0, gy + 20, 1), # Officer 1 (Left side, running right)
+            (gag_x + 55 + (1.0 - min(1.0, t_stage * 0.4)) * 25.0, gy + 22, -1) # Officer 2 (Right side, running left)
+        ]
+        for ox, oy, face_dir in officers:
+            cr.save()
+            cr.translate(ox, oy)
+            # Shadow
+            cr.set_source_rgba(0.1, 0.2, 0.1, 0.35)
+            cr.arc(0, 2, 6, 0, math.pi * 2)
+            cr.fill()
+
+            # Olive Drab Uniform
+            cr.set_source_rgb(0.26, 0.36, 0.24)
+            cr.rectangle(-3, -18, 6, 12) # Torso
+            cr.fill()
+            # Legs animated running
+            leg_tilt = run_cycle * 3.0 * face_dir
+            cr.set_line_width(2.0)
+            cr.move_to(-2, -6)
+            cr.line_to(-2 - leg_tilt, 0)
+            cr.move_to(2, -6)
+            cr.line_to(2 + leg_tilt, 0)
+            cr.stroke()
+
+            # Head with Officer Field Cap
+            cr.set_source_rgb(0.85, 0.70, 0.55) # Face
+            cr.arc(0, -22, 3.0, 0, math.pi * 2)
+            cr.fill()
+            cr.set_source_rgb(0.24, 0.34, 0.22) # Cap
+            cr.rectangle(-3, -26, 6, 3)
+            cr.fill()
+            cr.set_source_rgb(SOVIET_RED[0], SOVIET_RED[1], SOVIET_RED[2])
+            cr.rectangle(-1, -25, 2, 2) # Red Star
+            cr.fill()
+
+            # Raised Waving Arm
+            cr.set_source_rgb(0.26, 0.36, 0.24)
+            cr.move_to(face_dir * 3, -15)
+            cr.line_to(face_dir * 8, -22 + math.sin(t_stage * 8.0) * 3.0)
+            cr.stroke()
+            cr.restore()
+
+        # 4. Alive Soviet Mil Mi-4 Helicopter (Decelerating, Banking, Rotor Downwash & Lights)
+        heli_prog = min(1.0, t_stage / 6.0)
+        heli_x = 450 - (heli_prog ** 0.8) * 125.0 # Approaches and hovers at x ≈ 325
+        heli_y = 52 + math.sin(t_stage * 2.5) * 4.0
+        heli_bank = -0.06 + (1.0 - heli_prog) * 0.12 # Pitches forward while flying, levels out when hovering
+
+        cr.save()
+        cr.translate(heli_x, heli_y)
+        cr.rotate(heli_bank)
+
+        # Fuselage
+        cr.set_source_rgb(0.32, 0.40, 0.35)
+        cr.rectangle(-15, -6, 30, 13)
+        cr.fill()
+        # Rounded cockpit nose & cyan glass
+        cr.set_source_rgb(0.20, 0.70, 0.90)
+        cr.rectangle(-18, -4, 4, 7)
+        cr.fill()
+        # Tail Boom
+        cr.set_source_rgb(0.32, 0.40, 0.35)
+        cr.move_to(15, -4)
+        cr.line_to(36, -7)
+        cr.line_to(36, -3)
+        cr.line_to(15, 4)
+        cr.close_path()
+        cr.fill()
+        # Red Star on Tail Boom
+        cr.set_source_rgb(SOVIET_RED[0], SOVIET_RED[1], SOVIET_RED[2])
+        cr.rectangle(25, -6, 3, 3)
+        cr.fill()
+        # Landing Gear Wheels & Struts
+        cr.set_source_rgb(0.20, 0.20, 0.20)
+        cr.rectangle(-10, 7, 3, 4)
+        cr.rectangle(6, 7, 3, 4)
+        cr.fill()
+
+        # Strobe / Navigation Lights
+        is_strobe_on = ((t_stage * 5.0) % 1.0) > 0.4
+        if is_strobe_on:
+            # White Tail Strobe
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.95)
+            cr.arc(36, -5, 2.0, 0, math.pi * 2)
+            cr.fill()
+        # Red Port Wingtip Light
+        cr.set_source_rgba(1.0, 0.1, 0.1, 0.9)
+        cr.rectangle(-4, -8, 2, 2)
+        cr.fill()
+
+        # Rotor Mast Hub
+        cr.set_source_rgb(0.18, 0.20, 0.22)
+        cr.rectangle(-1, -11, 2, 5)
+        cr.fill()
+
+        # 4-Blade Spinning Main Rotor Disk with Motion Blur
+        rotor_phase = (t_stage * 45.0) % (math.pi * 2)
+        rotor_w = 34.0 * math.cos(rotor_phase)
+        cr.set_source_rgba(0.92, 0.96, 1.0, 0.30)
+        cr.rectangle(-34, -12, 68, 2)
+        cr.fill()
+        cr.set_source_rgba(0.95, 0.98, 1.0, 0.85)
+        cr.set_line_width(1.4)
+        cr.move_to(-rotor_w, -11)
+        cr.line_to(rotor_w, -11)
+        cr.stroke()
+
+        # Tail Rotor
+        tail_phase = (t_stage * 50.0) % (math.pi * 2)
+        cr.move_to(36, -5 - 6 * math.sin(tail_phase))
+        cr.line_to(36, -5 + 6 * math.sin(tail_phase))
+        cr.stroke()
+
+        cr.restore()
+
+        # Rotor Downwash Dust Particles on Meadow
+        if heli_prog > 0.3 and random.random() < 0.8:
+            self.particles.emit(heli_x + random.randint(-25, 25), gy + random.randint(2, 10), 0, random.uniform(0, math.pi * 2), color_type='dust', speed_mult=0.6)
+
+        cr.restore()
+
+    def render(self, cr, t):
+        t_seq = t % self.cycle_time
+
+        hud_line1 = ""
+        hud_line2 = ""
+
+        # ---------------------------------------------------------------------
+        # STAGE 1: Baikonur Liftoff (0.0 -> 6.0s)
+        # ---------------------------------------------------------------------
+        if t_seq < 6.0:
+            cr.set_source_rgb(SKY_BLUE_DAY[0], SKY_BLUE_DAY[1], SKY_BLUE_DAY[2])
+            cr.rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+            cr.fill()
+
+            gantry_p = min(1.0, t_seq / 2.8)
+            is_ignited = (t_seq >= 2.5)
+
+            if t_seq < 2.5:
+                self._draw_launch_pad(cr, gantry_retract_prog=gantry_p, is_ignited=False)
+                rocket_y = self.pad_ground_y - 6
+                self._draw_r7_rocket(cr, self.pad_cx, rocket_y, angle=0.0, is_thrusting=False)
+                hud_line1 = "БАЙКОНУР ПЛОЩАДКА №1 // ПРЕДСТАРТОВАЯ ПОДГОТОВКА // 12 АПРЕЛЯ 1961"
+                hud_line2 = "КОРОЛЁВ: 'КЛЮЧ НА СТАРТ!' // ОТВОД КАБЕЛЬ-МАЧТ // ЗАЖИГАНИЕ ЧЕРЕЗ 3 СЕК"
+            else:
+                lift_p = (t_seq - 2.5) / 3.5
+                ground_drop = (lift_p ** 1.8) * 80.0
+                self._draw_launch_pad(cr, gantry_retract_prog=1.0, is_ignited=True, ground_offset_y=ground_drop)
+                
+                rocket_y = (self.pad_ground_y - 6) - (lift_p ** 2.2) * 260.0
+                
+                for _ in range(4):
+                    self.particles.emit(self.pad_cx + random.randint(-20, 20), self.pad_ground_y + ground_drop - 2, 0, math.pi, color_type='smoke')
+                    self.particles.emit(self.pad_cx + random.randint(-20, 20), self.pad_ground_y + ground_drop - 2, 0, 0, color_type='smoke')
+                    self.particles.emit(self.pad_cx + random.randint(-15, 15), self.pad_ground_y + ground_drop + 4, 0, math.pi / 2, color_type='blast')
+                
+                if random.random() < 0.95:
+                    self.particles.emit(self.pad_cx, rocket_y + 18, 0, -math.pi / 2.0, color_type='orange')
+
+                self._draw_r7_rocket(cr, self.pad_cx, rocket_y, angle=0.0, is_thrusting=True)
+
+                hud_line1 = "ЗАПУСК РН ВОСТОК 8К72К // ДВИГАТЕЛИ НА РЕЖИМЕ 100% // ПОДЪЁМ!"
+                hud_line2 = "ГАГАРИН: 'ПОЕХАЛИ!' // 09:07 МСК // ПЕРВЫЙ ПОЛЁТ ЧЕЛОВЕКА В КОСМОС"
+
+        # ---------------------------------------------------------------------
+        # STAGE 2: Seamless Atmospheric Ascent to Orbit (6.0 -> 18.0s)
+        # ---------------------------------------------------------------------
+        elif t_seq < 18.0:
+            ascent_p = (t_seq - 6.0) / 12.0
+
+            # Dynamic Sky Darkening: Troposphere Cyan -> Stratosphere Indigo -> Vacuum Black
+            if ascent_p < 0.45:
+                sky_sub_p = ascent_p / 0.45
+                sky_r = SKY_BLUE_DAY[0] * (1.0 - sky_sub_p) + 0.04 * sky_sub_p
+                sky_g = SKY_BLUE_DAY[1] * (1.0 - sky_sub_p) + 0.08 * sky_sub_p
+                sky_b = SKY_BLUE_DAY[2] * (1.0 - sky_sub_p) + 0.22 * sky_sub_p
+            elif ascent_p < 0.75:
+                sky_sub_p = (ascent_p - 0.45) / 0.30
+                sky_r = 0.04 * (1.0 - sky_sub_p) + 0.01 * sky_sub_p
+                sky_g = 0.08 * (1.0 - sky_sub_p) + 0.02 * sky_sub_p
+                sky_b = 0.22 * (1.0 - sky_sub_p) + 0.04 * sky_sub_p
+            else:
+                sky_r, sky_g, sky_b = 0.01, 0.02, 0.04
+
+            cr.set_source_rgb(sky_r, sky_g, sky_b)
+            cr.rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+            cr.fill()
+
+            self._draw_earth_curved_horizon(cr, t_norm=ascent_p * 0.25, altitude_prog=ascent_p)
+
+            rocket_x = 70 + ascent_p * 330.0
+            rocket_y = 230 - (ascent_p ** 1.35) * 165.0
+            pitch_ang = math.radians(35.0 + ascent_p * 35.0)
+
+            if t_seq < 10.5:
+                # 4-Booster Stratospheric Boost
+                if random.random() < 0.9:
+                    self.particles.emit(rocket_x, rocket_y, 0, pitch_ang - math.pi / 2.0, color_type='orange')
+                self._draw_r7_rocket(cr, rocket_x, rocket_y, angle=pitch_ang, is_thrusting=True)
+                hud_line1 = "T+75S: ПРОХОЖДЕНИЕ СТРАТОСФЕРЫ // СКОРОСТЬ 2,400 М/С // ПЕРЕГРУЗКА 3.5G"
+                hud_line2 = "НЕБО ТЕМНЕЕТ: 'НАБЛЮДАЮ ПЕРЕХОД В СИНИЙ И ЧЁРНЫЙ ЦВЕТ КОСМОСА'"
+            elif t_seq < 14.0:
+                # Korolev Cross Staging in Upper Atmosphere / Mesosphere
+                sep_p = (t_seq - 10.5) / 3.5
+                self._draw_korolev_cross(cr, rocket_x, rocket_y, pitch_ang, sep_p)
+                self._draw_r7_rocket(cr, rocket_x, rocket_y, angle=pitch_ang, is_thrusting=True, sustainer_only=True, fairing_jettisoned=(sep_p > 0.6))
+                hud_line1 = "T+118S: ОТДЕЛЕНИЕ 4 БОКОВЫХ БЛОКОВ // 'КРЕСТ КОРОЛЁВА'"
+                hud_line2 = "СБРОС СТВОРКИ ОБТЕКАТЕЛЯ // ВКЛЮЧЕНИЕ 3-Й СТУПЕНИ (БЛОК-Е)"
+            else:
+                # Blok-E Final Orbit Injection into Pure Starry Vacuum
+                if random.random() < 0.85:
+                    self.particles.emit(rocket_x, rocket_y, 0, pitch_ang - math.pi / 2.0, color_type='cyan')
+                self._draw_r7_rocket(cr, rocket_x, rocket_y, angle=pitch_ang, is_thrusting=True, sustainer_only=True, fairing_jettisoned=True)
+                hud_line1 = "СКОРОСТЬ: 28,260 КМ/Ч (МАХ 23) // ВЫХОД НА ОКОЛОЗЕМНУЮ ОРБИТУ"
+                hud_line2 = "ГАГАРИН: 'ВИЖУ ГОРИЗОНТ ЗЕМЛИ. ТАКОЙ КРАСИВЫЙ ОРЕОЛ, ГОЛУБОВАТОГО ЦВЕТА'"
+
+        # ---------------------------------------------------------------------
+        # STAGE 3: Earth Orbit & Cosmonaut Observation (18.0 -> 26.0s)
+        # ---------------------------------------------------------------------
+        elif t_seq < 26.0:
+            orbit_p = (t_seq - 18.0) / 8.0
+            self._draw_earth_curved_horizon(cr, t_norm=0.25 + orbit_p * 0.35, altitude_prog=1.0)
+
+            craft_x = 90 + orbit_p * 300.0
+            craft_y = 65 + math.sin(orbit_p * math.pi * 2) * 8.0
+            craft_ang = math.radians(75.0 + math.sin(t * 1.5) * 6.0)
+
+            if random.random() < 0.2:
+                self.particles.emit(craft_x, craft_y, 0, craft_ang, color_type='cyan')
+
+            self._draw_vostok_craft(cr, craft_x, craft_y, angle=craft_ang, scale=1.1, has_service=True)
+
+            hud_line1 = "ОРБИТА КОРАБЛЯ 'ВОСТОК-1' // АПОГЕЙ: 327 КМ // ПЕРИГЕЙ: 181 КМ // НАКЛОН: 65°"
+            hud_line2 = "ГАГАРИН: 'НАБЛЮДАЮ ЗЕМЛЮ... ВИДНЫ ОБЛАКА, ГОРИЗОНТ. КРАСОТА-ТО КАКАЯ!'"
+
+        # ---------------------------------------------------------------------
+        # STAGE 4: TDU-1 Retro-Fire & Atmospheric Re-entry (26.0 -> 33.0s)
+        # ---------------------------------------------------------------------
+        elif t_seq < 33.0:
+            reentry_p = (t_seq - 26.0) / 7.0
+
+            if reentry_p < 0.35:
+                # Phase 4A: TDU-1 Braking Burn
+                self._draw_earth_curved_horizon(cr, t_norm=0.60 + reentry_p * 0.20, altitude_prog=1.0)
+
+                craft_x = 180 + reentry_p * 120.0
+                craft_y = 80
+                retro_ang = math.radians(-105.0)
+                
+                if random.random() < 0.9:
+                    self.particles.emit(craft_x, craft_y, 0, retro_ang + math.pi / 2.0, color_type='orange')
+
+                self._draw_vostok_craft(cr, craft_x, craft_y, angle=retro_ang, scale=1.1, has_service=True, is_braking=True)
+
+                hud_line1 = "ВКЛЮЧЕНИЕ ТОРМОЗНОЙ ДВИГАТЕЛЬНОЙ УСТАНОВКИ (ТДУ-1) // ИМПУЛЬС: -155 М/С"
+                hud_line2 = "ГАГАРИН: 'ТДУ СРАБОТАЛА В 10:25 ПО ГРАФИКУ, НАЧАЛОСЬ ТОРМОЖЕНИЕ'"
+            else:
+                # Phase 4B: Authentic Hypersonic Re-entry with Ablative Sparks & Plasma Wake
+                fall_p = (reentry_p - 0.35) / 0.65
+                cap_x = 140 + fall_p * 200.0
+                cap_y = 45 + (fall_p ** 1.35) * 165.0
+                flight_ang = math.radians(48.0)
+
+                perp_ang = flight_ang + math.pi / 2.0
+                for s_dir in [-1, 1]:
+                    shoulder_x = cap_x + math.cos(perp_ang) * (s_dir * 8.0)
+                    shoulder_y = cap_y + math.sin(perp_ang) * (s_dir * 8.0)
+                    self.particles.emit(shoulder_x, shoulder_y, 0, flight_ang - math.pi, color_type='spark', speed_mult=1.3)
+                    if random.random() < 0.6:
+                        self.particles.emit(shoulder_x, shoulder_y, 0, flight_ang - math.pi, color_type='plasma', speed_mult=0.9)
+                
+                if random.random() < 0.5:
+                    self.particles.emit(cap_x, cap_y, 0, flight_ang - math.pi, color_type='smoke', speed_mult=0.7)
+
+                self._draw_reentry_retrograde_capsule(cr, cap_x, cap_y, flight_angle=flight_ang, scale=1.2)
+
+                hud_line1 = "ВХОД В ПЛОТНЫЕ СЛОИ АТМОСФЕРЫ // ИОНИЗАЦИОННАЯ ПЛАЗМА // ПЕРЕГРУЗКА 8-10G"
+                hud_line2 = "ОТДЕЛЕНИЕ ПРИБОРНОГО ОТСЕКА // ТЕМПЕРАТУРА ЭКРАНА +3,000°C"
+
+        # ---------------------------------------------------------------------
+        # STAGE 5: High-Altitude Ejection & Dual Parachutes (33.0 -> 40.0s)
+        # ---------------------------------------------------------------------
+        elif t_seq < 40.0:
+            chute_p = (t_seq - 33.0) / 7.0
+
+            cr.save()
+            cr.set_source_rgb(0.25, 0.55, 0.85)
+            cr.rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+            cr.fill()
+
+            self._draw_stylized_cumulus_cloud(cr, 110, 100, width=95, height=35, alpha=0.92)
+            self._draw_stylized_cumulus_cloud(cr, 360, 80, width=110, height=38, alpha=0.92)
+            self._draw_stylized_cumulus_cloud(cr, 240, 160, width=80, height=28, alpha=0.75)
+            cr.restore()
+
+            cap_x = 155 + math.sin(t * 2.0) * 8.0
+            cap_y = 45 + chute_p * 130.0
+
+            gag_x = 285 + math.sin(t * 1.8) * 10.0
+            gag_y = 65 + chute_p * 125.0
+
+            self._draw_ejection_and_parachutes(cr, cap_x, cap_y, gag_x, gag_y, is_ejected=True)
+
+            hud_line1 = "ВЫСОТА 7,000 М // КАТАПУЛЬТИРОВАНИЕ КОСМОНАВТА // РАЗДЕЛЕНИЕ"
+            hud_line2 = "СПАСАТЕЛЬНАЯ СИСТЕМА: ОСНОВНЫЕ ПАРАШЮТЫ РАСКРЫТЫ // СКОРОСТЬ 6 М/С"
+
+        # ---------------------------------------------------------------------
+        # STAGE 6: Saratov Field Touchdown, Recovery & Salute (40.0 -> 48.0s)
+        # ---------------------------------------------------------------------
+        else:
+            saratov_p = (t_seq - 40.0) / 8.0
+            self._draw_saratov_scene(cr, saratov_p)
+
+            hud_line1 = "САРАТОВ // ДЕРЕВНЯ СМЕЛОВКА // ПОСАДКА УСПЕШНО В 10:55 МСК"
+            hud_line2 = "ПЕРВЫЙ ЧЕЛОВЕК В КОСМОСЕ: ЮРИЙ АЛЕКСЕЕВИЧ ГАГАРИН // СЛАВА СССР!"
+
+        self.particles.update()
+        self.particles.draw(cr)
+
+        # ---------------------------------------------------------------------
+        # Soviet VFD Cyrillic Telemetry HUD Banner (High Contrast & Avionics Styling)
+        # ---------------------------------------------------------------------
+        cr.save()
+        # Translucent dark telemetry box
+        cr.set_source_rgba(0.03, 0.06, 0.08, 0.78)
+        cr.rectangle(6, 4, VIRTUAL_WIDTH - 12, 23)
+        cr.fill()
+        cr.set_source_rgba(SOVIET_CYAN[0], SOVIET_CYAN[1], SOVIET_CYAN[2], 0.35)
+        cr.set_line_width(0.8)
+        cr.rectangle(6, 4, VIRTUAL_WIDTH - 12, 23)
+        cr.stroke()
+
+        # Telemetry Text
+        cr.set_source_rgb(SOVIET_CYAN[0], SOVIET_CYAN[1], SOVIET_CYAN[2])
+        cr.select_font_face("Monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(7)
+        cr.move_to(10, 13)
+        cr.show_text(hud_line1)
+        cr.move_to(10, 23)
+        cr.show_text(hud_line2)
+        cr.restore()
+
+# =============================================================================
+# MAIN MULTI-SCENE SCREENSAVER CONTROLLER & FADE TRANSITION ENGINE
+# =============================================================================
+class SpaceScreensaverWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.set_title("Space Mission Control - 8-Bit Multi-Scene Screensaver")
+        self.set_wmclass("space-screensaver", "space-screensaver")
+        self.set_decorated(False)
+        self.set_app_paintable(True)
+        self.set_keep_above(True)
+
+        self.connect("realize", self._on_realize)
+        self.connect("draw", self.on_draw)
+        self.connect("key-press-event", self._on_key_event)
+        self.connect("button-press-event", self._on_input_exit)
+        self.connect("motion-notify-event", self._on_motion_event)
+
+        self.set_events(
+            Gdk.EventMask.KEY_PRESS_MASK |
+            Gdk.EventMask.BUTTON_PRESS_MASK |
+            Gdk.EventMask.POINTER_MOTION_MASK
+        )
+
+        self.start_time = time.time()
+        self.initial_mouse_pos = None
+        self.motion_threshold = 30.0
+
+        # Load Configuration
+        self.cfg = self._load_screensaver_config()
+        self.lock_on_wake = self.cfg.get("lock_on_wake", False)
+        scene_mode = self.cfg.get("scene_mode", "all")
+
+        self.starfield = Starfield(count=150)
+        
+        # Build scenes according to scene_mode preference
+        if scene_mode == "arch":
+            self.scenes = [SceneArchOrbit()]
+        elif scene_mode == "nasa":
+            self.scenes = [SceneNasaMeatball()]
+        elif scene_mode == "lunar":
+            self.scenes = [SceneLunarLander()]
+        elif scene_mode in ("soviet", "kosmos"):
+            self.scenes = [SceneSovietSpaceProgram()]
+        elif scene_mode in ("gagarin", "vostok"):
+            self.scenes = [SceneSovietGagarin()]
+        else:
+            self.scenes = [
+                SceneArchOrbit(),
+                SceneNasaMeatball(),
+                SceneLunarLander(),
+                SceneSovietSpaceProgram(),
+                SceneSovietGagarin()
+            ]
+
+        self.current_scene_idx = 0
+        self.next_scene_idx = 1 if len(self.scenes) > 1 else 0
+        self.scene_start_time = time.time()
+        self.scenes[0].on_enter()
+        self.is_transitioning = False
+        self.transition_start_time = 0.0
+
+        # Virtual pixel surface (480x270)
+        self.pixel_surface = cairo.ImageSurface(cairo.FORMAT_RGB24, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+        self.pixel_cr = cairo.Context(self.pixel_surface)
+
+        GLib.timeout_add(int(1000 / FPS), self._on_tick)
+        self.fullscreen()
+
+    def _load_screensaver_config(self):
+        cfg_path = os.path.expanduser("~/.config/space-screensaver/config.json")
+        if os.path.isfile(cfg_path):
+            try:
+                import json
+                with open(cfg_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {"timeout_minutes": 5, "lock_on_wake": False, "scene_mode": "all"}
+
+    def _on_realize(self, widget):
+        window = widget.get_window()
+        cursor = Gdk.Cursor.new_from_name(widget.get_display(), "none")
+        window.set_cursor(cursor)
+
+    def trigger_transition(self):
+        """Starts smooth Fade-Out / Fade-In transition."""
+        if len(self.scenes) <= 1:
+            return
+        if not self.is_transitioning:
+            self.is_transitioning = True
+            self.transition_start_time = time.time()
+            self.next_scene_idx = (self.current_scene_idx + 1) % len(self.scenes)
+            self.scenes[self.next_scene_idx].on_enter()
+
+    def _on_key_event(self, widget, event):
+        keyval = event.keyval
+        # Tab, Space, or 'n'/'N' cycles scene for instant testing
+        if keyval in [Gdk.KEY_Tab, Gdk.KEY_space, Gdk.KEY_n, Gdk.KEY_N, Gdk.KEY_c, Gdk.KEY_C]:
+            self.trigger_transition()
+            return True
+        # Any other key exits screensaver
+        self.close_screensaver()
+        return True
+
+    def _on_input_exit(self, widget, event):
+        self.close_screensaver()
+        return True
+
+    def _on_motion_event(self, widget, event):
+        if self.initial_mouse_pos is None:
+            self.initial_mouse_pos = (event.x, event.y)
+            return False
+        dx = event.x - self.initial_mouse_pos[0]
+        dy = event.y - self.initial_mouse_pos[1]
+        if math.sqrt(dx * dx + dy * dy) > self.motion_threshold:
+            self.close_screensaver()
+        return False
+
+    def close_screensaver(self):
+        if self.lock_on_wake:
+            import subprocess
+            subprocess.Popen(["hyprlock"])
+        Gtk.main_quit()
+
+    def _on_tick(self):
+        now = time.time()
+        # Automatic cycle check every SCENE_DURATION (2 minutes)
+        if not self.is_transitioning and (now - self.scene_start_time >= SCENE_DURATION):
+            self.trigger_transition()
+        self.queue_draw()
+        return True
+
+    def on_draw(self, widget, cr):
+        now = time.time()
+        elapsed = now - self.start_time
+        win_w = widget.get_allocated_width()
+        win_h = widget.get_allocated_height()
+
+        pcr = self.pixel_cr
+        # Clear background (Deep Space Black)
+        pcr.set_source_rgb(0.02, 0.03, 0.05)
+        pcr.paint()
+
+        # Draw Starfield Background
+        self.starfield.draw(pcr, elapsed)
+
+        # Handle Smooth Fade-Out / Fade-In Transition
+        if self.is_transitioning:
+            t_prog = (now - self.transition_start_time) / TRANSITION_DURATION
+            if t_prog >= 1.0:
+                # Transition complete
+                self.is_transitioning = False
+                self.current_scene_idx = self.next_scene_idx
+                self.scene_start_time = self.transition_start_time + (TRANSITION_DURATION * 0.5)
+                t_prog = 1.0
+
+            if t_prog < 0.5:
+                # Phase 1: Fade Out current scene (alpha: 1.0 -> 0.0)
+                fade_alpha = 1.0 - (t_prog * 2.0)
+                t_cur = max(0.0, now - self.scene_start_time)
+                self.scenes[self.current_scene_idx].render(pcr, t_cur)
+                pcr.set_source_rgba(0.02, 0.03, 0.05, 1.0 - fade_alpha)
+                pcr.paint()
+            else:
+                # Phase 2: Fade In next scene (alpha: 0.0 -> 1.0)
+                fade_alpha = (t_prog - 0.5) * 2.0
+                t_next = max(0.0, now - (self.transition_start_time + TRANSITION_DURATION * 0.5))
+                self.scenes[self.next_scene_idx].render(pcr, t_next)
+                pcr.set_source_rgba(0.02, 0.03, 0.05, 1.0 - fade_alpha)
+                pcr.paint()
+        else:
+            # Active Scene Rendering with per-scene elapsed playback time
+            t_cur = max(0.0, now - self.scene_start_time)
+            self.scenes[self.current_scene_idx].render(pcr, t_cur)
+
+        # Bottom Hint (Retro 8-bit font)
+        pcr.save()
+        pcr.set_source_rgba(1.0, 1.0, 1.0, 0.35)
+        pcr.select_font_face("Monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        pcr.set_font_size(6)
+        pcr.move_to(8, VIRTUAL_HEIGHT - 8)
+        pcr.show_text(f"[SCENE {self.current_scene_idx+1}/{len(self.scenes)} // PRESS TAB/SPACE TO CYCLE // ANY KEY TO EXIT]")
+        pcr.restore()
+
+        # ---------------------------------------------------------------------
+        # Nearest-Neighbor Fullscreen Upscale
+        # ---------------------------------------------------------------------
+        cr.save()
+        scale_x = win_w / VIRTUAL_WIDTH
+        scale_y = win_h / VIRTUAL_HEIGHT
+        scale = min(scale_x, scale_y)
+        offset_x = (win_w - (VIRTUAL_WIDTH * scale)) / 2.0
+        offset_y = (win_h - (VIRTUAL_HEIGHT * scale)) / 2.0
+
+        cr.set_source_rgb(0, 0, 0)
+        cr.paint()
+
+        cr.translate(offset_x, offset_y)
+        cr.scale(scale, scale)
+
+        pattern = cairo.SurfacePattern(self.pixel_surface)
+        pattern.set_filter(cairo.FILTER_NEAREST)
+        cr.set_source(pattern)
+        cr.paint()
+        cr.restore()
+
+def main():
+    win = SpaceScreensaverWindow()
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

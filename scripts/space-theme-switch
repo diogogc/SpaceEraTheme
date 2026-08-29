@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+THEMES=("nasa" "crt-amber" "crt-green" "kosmos-vfd")
+THEMES_DIR="$HOME/.config/themes"
+STATE_FILE="$THEMES_DIR/current_theme"
+
+# Get current theme
+current="nasa"
+if [[ -f "$STATE_FILE" ]]; then
+  current=$(cat "$STATE_FILE" 2>/dev/null || echo "nasa")
+fi
+
+# Determine target theme
+target=""
+arg="${1:-next}"
+
+case "$arg" in
+  next|--next)
+    for i in "${!THEMES[@]}"; do
+      if [[ "${THEMES[$i]}" == "$current" ]]; then
+        next_index=$(( (i + 1) % ${#THEMES[@]} ))
+        target="${THEMES[$next_index]}"
+        break
+      fi
+    done
+    [[ -z "$target" ]] && target="${THEMES[0]}"
+    ;;
+  prev|--prev)
+    for i in "${!THEMES[@]}"; do
+      if [[ "${THEMES[$i]}" == "$current" ]]; then
+        prev_index=$(( (i - 1 + ${#THEMES[@]}) % ${#THEMES[@]} ))
+        target="${THEMES[$prev_index]}"
+        break
+      fi
+    done
+    [[ -z "$target" ]] && target="${THEMES[0]}"
+    ;;
+  *)
+    # Explicit theme name
+    target="$arg"
+    ;;
+esac
+
+# Validate target directory
+if [[ ! -d "$THEMES_DIR/$target" ]]; then
+  echo "Theme '$target' not found in $THEMES_DIR" >&2
+  exit 1
+fi
+
+echo "Applying mission profile: $target"
+printf '%s' "$target" > "$STATE_FILE"
+
+# 1. Hyprland & Hyprlock
+ln -sf "$THEMES_DIR/$target/hypr.lua" "$HOME/.config/hypr/theme-current.lua"
+if [[ -f "$THEMES_DIR/$target/hyprlock.conf" ]]; then
+  ln -sf "$THEMES_DIR/$target/hyprlock.conf" "$HOME/.config/hypr/hyprlock.conf"
+fi
+
+# 2. Waybar
+ln -sf "$THEMES_DIR/$target/waybar.css" "$HOME/.config/waybar/theme-current.css"
+
+# 3. Kitty
+if [[ -d "$HOME/.config/kitty" && -f "$THEMES_DIR/$target/kitty.conf" ]]; then
+  ln -sf "$THEMES_DIR/$target/kitty.conf" "$HOME/.config/kitty/theme-current.conf"
+  ln -sf "$THEMES_DIR/$target/kitty.conf" "$HOME/.config/kitty/current-theme.conf"
+  if command -v kitty &>/dev/null; then
+    kitty @ set-colors -a -c "$THEMES_DIR/$target/kitty.conf" 2>/dev/null || true
+  fi
+fi
+
+# 4. Wallpaper
+if [[ -f "$THEMES_DIR/$target/wallpaper.jpg" ]]; then
+  ln -sf "$THEMES_DIR/$target/wallpaper.jpg" "$HOME/.config/hypr/wallpaper-current.jpg"
+  if command -v hyprpaper &>/dev/null; then
+    killall -9 hyprpaper 2>/dev/null || true
+    setsid hyprpaper >/dev/null 2>&1 &
+  elif command -v swaybg &>/dev/null; then
+    killall swaybg 2>/dev/null || true
+    setsid swaybg -i "$HOME/.config/hypr/wallpaper-current.jpg" -m fill >/dev/null 2>&1 &
+  fi
+fi
+
+# 5. Wofi Application Launcher
+if [[ -f "$THEMES_DIR/$target/wofi.css" ]]; then
+  mkdir -p "$HOME/.config/wofi"
+  ln -sf "$THEMES_DIR/$target/wofi.css" "$HOME/.config/wofi/style.css"
+  ln -sf "$THEMES_DIR/$target/wofi.conf" "$HOME/.config/wofi/config"
+fi
+
+# 6. Dunst System Notifications
+if [[ -f "$THEMES_DIR/$target/dunstrc" ]]; then
+  mkdir -p "$HOME/.config/dunst"
+  ln -sf "$THEMES_DIR/$target/dunstrc" "$HOME/.config/dunst/dunstrc"
+  if command -v dunst &>/dev/null; then
+    killall dunst 2>/dev/null || true
+    setsid dunst >/dev/null 2>&1 &
+  fi
+fi
+
+# 7. Qt / KDE System Dialogs (kdeglobals)
+case "$target" in
+  "nasa")
+    q_bg="10,13,18"; q_bg_alt="17,22,31"; q_fg="226,232,240"; q_acc="255,176,0"; q_dim="118,134,150"; q_grn="46,247,136"; q_red="255,59,48"
+    ;;
+  "crt-amber")
+    q_bg="6,7,9"; q_bg_alt="13,15,20"; q_fg="230,142,0"; q_acc="255,158,0"; q_dim="128,82,0"; q_grn="255,158,0"; q_red="255,85,51"
+    ;;
+  "crt-green")
+    q_bg="4,7,4"; q_bg_alt="10,17,10"; q_fg="40,204,40"; q_acc="51,255,51"; q_dim="24,102,24"; q_grn="51,255,51"; q_red="255,68,68"
+    ;;
+  "kosmos-vfd")
+    q_bg="6,14,12"; q_bg_alt="12,27,23"; q_fg="54,184,156"; q_acc="72,229,194"; q_dim="34,107,92"; q_grn="72,229,194"; q_red="255,72,96"
+    ;;
+esac
+
+cat << KDE_EOF > "$HOME/.config/kdeglobals"
+[General]
+ColorScheme=ApolloDark
+Name=ApolloDark
+
+[Colors:Window]
+BackgroundNormal=$q_bg
+BackgroundAlternate=$q_bg_alt
+ForegroundNormal=$q_fg
+ForegroundInactive=$q_dim
+ForegroundActive=$q_acc
+ForegroundLink=$q_acc
+ForegroundVisited=$q_acc
+ForegroundNegative=$q_red
+ForegroundNeutral=$q_acc
+ForegroundPositive=$q_grn
+
+[Colors:Button]
+BackgroundNormal=$q_bg
+BackgroundAlternate=$q_bg_alt
+ForegroundNormal=$q_acc
+ForegroundInactive=$q_dim
+ForegroundActive=$q_acc
+ForegroundNegative=$q_red
+ForegroundNeutral=$q_acc
+ForegroundPositive=$q_grn
+
+[Colors:Selection]
+BackgroundNormal=$q_acc
+BackgroundAlternate=$q_acc
+ForegroundNormal=$q_bg
+ForegroundInactive=$q_bg
+ForegroundActive=$q_bg
+
+[Colors:View]
+BackgroundNormal=$q_bg
+BackgroundAlternate=$q_bg_alt
+ForegroundNormal=$q_fg
+ForegroundInactive=$q_dim
+ForegroundActive=$q_acc
+ForegroundLink=$q_acc
+
+[Colors:Tooltip]
+BackgroundNormal=$q_bg_alt
+BackgroundAlternate=$q_bg
+ForegroundNormal=$q_fg
+
+[Colors:Header]
+BackgroundNormal=$q_bg_alt
+BackgroundAlternate=$q_bg
+ForegroundNormal=$q_acc
+
+[KDE]
+colorScheme=ApolloDark
+KDE_EOF
+
+# 8. GTK3 / GTK4 & FreeDesktop Color Scheme Dark Mode Preference
+mkdir -p "$HOME/.config/gtk-3.0" "$HOME/.config/gtk-4.0"
+for v in "gtk-3.0" "gtk-4.0"; do
+  cat << GTK_EOF > "$HOME/.config/$v/settings.ini"
+[Settings]
+gtk-theme-name=Adwaita-dark
+gtk-application-prefer-dark-theme=1
+gtk-icon-theme-name=Adwaita
+gtk-font-name=JetBrainsMono Nerd Font 10
+gtk-cursor-theme-name=Adwaita
+gtk-cursor-theme-size=24
+GTK_EOF
+done
+
+if command -v gsettings &>/dev/null; then
+  gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark' 2>/dev/null || true
+fi
+
+# 9. Sync D-Bus / systemd activation environment for portals and Qt
+if command -v dbus-update-activation-environment &>/dev/null; then
+  dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP=Hyprland QT_QPA_PLATFORMTHEME=gtk3 GTK_THEME=Adwaita-dark COLOR_SCHEME=prefer-dark 2>/dev/null || true
+fi
+
+# Ensure Polkit Authentication Agent is active
+if ! pgrep -f "polkit-kde-authentication-agent-1" >/dev/null 2>&1; then
+  if [[ -x /usr/lib/polkit-kde-authentication-agent-1 ]]; then
+    setsid /usr/lib/polkit-kde-authentication-agent-1 >/dev/null 2>&1 &
+  fi
+fi
+
+# Reload Hyprland
+if command -v hyprctl &>/dev/null && pgrep -x Hyprland >/dev/null; then
+  hyprctl reload >/dev/null 2>&1 || true
+fi
+
+# Reload Waybar
+if pgrep -x waybar >/dev/null; then
+  pkill -SIGUSR2 waybar 2>/dev/null || true
+else
+  setsid waybar >/dev/null 2>&1 &
+fi
+
+# Reload DSKY Launcher live if active
+pkill -USR1 -f dsky-launcher 2>/dev/null || true
+
+# Send notification if notify-send is available
+title="MISSION PROFILE ENGAGED"
+body="Active Profile: ${target^^}\nFlight Controls & Telemetry: NOMINAL"
+
+case "$target" in
+  "nasa")
+    body="Profile: NASA (Flight Operations)\nTelemetry: DSKY Amber & Instruments White"
+    ;;
+  "crt-amber")
+    body="Profile: CRT-AMBER (IBM / DEC Mainframe CRT)\nTelemetry: 590nm Phosphor Glow"
+    ;;
+  "crt-green")
+    body="Profile: CRT-GREEN (DEC VT100 Matrix CRT)\nTelemetry: 525nm P1 Phosphor Glow"
+    ;;
+  "kosmos-vfd")
+    body="Profile: KOSMOS-VFD (Soviet Space Program)\nTelemetry: VFD Electric Mint Glow"
+    ;;
+esac
+
+if command -v notify-send &>/dev/null; then
+  notify-send -t 3500 "$title" "$body" 2>/dev/null || true
+fi
+
+# Play Apollo Quindar intro tone
+command -v space-quindar &>/dev/null && space-quindar intro 2>/dev/null || true
+
+echo "Successfully loaded mission profile: $target"

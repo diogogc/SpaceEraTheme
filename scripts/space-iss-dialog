@@ -1,0 +1,733 @@
+#!/usr/bin/env python3
+"""
+====================================================================
+ 🛰️ SPACE MISSION CONTROL: ISS ORBITAL TELEMETRY & WORLD MAP
+====================================================================
+ Interactive Console Window displaying:
+   - High-precision Equirectangular World Map with Coastlines
+   - Real-time ISS Orbit Path & Ground Track (19 Projection Nodes)
+   - Dynamic Visibility Footprint Circle & Beacon
+   - Home Base Location Marker & 24h Pass Predictions
+   - DSKY Telemetry Registers & City Configurator
+   - Space Mission Control Theme Synchronization (Zero-White-Background)
+====================================================================
+"""
+
+import sys
+import os
+import json
+import math
+import time
+import subprocess
+import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+
+COASTLINES_FILE = os.path.expanduser("~/.config/spaceera/world-coastlines.json")
+TRACKER_BIN = os.path.expanduser("~/.local/bin/spaceera-iss-tracker")
+
+THEMES = {
+    "nasa": {
+        "bg_chassis": "#0a0d12",
+        "bg_panel": "#12161f",
+        "bg_card": "#0d1118",
+        "bg_input": "#06080b",
+        "bg_selected": "#241e0c",
+        "accent": "#ffb000",
+        "accent_dim": "#8c6200",
+        "text_primary": "#ffb000",
+        "text_secondary": "#c89220",
+        "text_dim": "#705a28",
+        "border_color": "#ffb000",
+        "border_dim": "#263040",
+        "map_land": [0.15, 0.20, 0.28],
+        "map_coast": [0.35, 0.45, 0.60],
+        "map_grid": [0.12, 0.16, 0.22],
+        "orbit_color": [0.95, 0.95, 0.95],
+        "iss_color": [1.0, 0.2, 0.2],
+        "home_color": [0.2, 0.8, 1.0],
+        "footprint_color": [0.2, 0.6, 1.0],
+    },
+    "crt-amber": {
+        "bg_chassis": "#060709",
+        "bg_panel": "#0e1014",
+        "bg_card": "#090b0e",
+        "bg_input": "#030405",
+        "bg_selected": "#261908",
+        "accent": "#ff9e00",
+        "accent_dim": "#7a4c00",
+        "text_primary": "#ff9e00",
+        "text_secondary": "#c77c00",
+        "text_dim": "#734900",
+        "border_color": "#ff9e00",
+        "border_dim": "#402800",
+        "map_land": [0.18, 0.11, 0.03],
+        "map_coast": [0.45, 0.28, 0.08],
+        "map_grid": [0.14, 0.09, 0.02],
+        "orbit_color": [1.0, 0.8, 0.3],
+        "iss_color": [1.0, 0.2, 0.2],
+        "home_color": [0.2, 0.9, 0.9],
+        "footprint_color": [1.0, 0.6, 0.0],
+    },
+    "crt-green": {
+        "bg_chassis": "#040704",
+        "bg_panel": "#0a100a",
+        "bg_card": "#070c07",
+        "bg_input": "#020502",
+        "bg_selected": "#102610",
+        "accent": "#33ff33",
+        "accent_dim": "#156615",
+        "text_primary": "#33ff33",
+        "text_secondary": "#28cc28",
+        "text_dim": "#186618",
+        "border_color": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "map_land": [0.05, 0.16, 0.05],
+        "map_coast": [0.15, 0.40, 0.15],
+        "map_grid": [0.06, 0.14, 0.06],
+        "orbit_color": [0.6, 1.0, 0.6],
+        "iss_color": [1.0, 0.3, 0.3],
+        "home_color": [0.3, 1.0, 1.0],
+        "footprint_color": [0.2, 0.8, 0.2],
+    },
+    "kosmos-vfd": {
+        "bg_chassis": "#07100e",
+        "bg_panel": "#0e1e1a",
+        "bg_card": "#0a1714",
+        "bg_input": "#040b09",
+        "bg_selected": "#173830",
+        "accent": "#00f0d0",
+        "accent_dim": "#006657",
+        "text_primary": "#00f0d0",
+        "text_secondary": "#00bfa5",
+        "text_dim": "#1a5c52",
+        "border_color": "#00f0d0",
+        "border_dim": "#0e3830",
+        "map_land": [0.05, 0.18, 0.16],
+        "map_coast": [0.12, 0.45, 0.40],
+        "map_grid": [0.06, 0.15, 0.13],
+        "orbit_color": [0.8, 1.0, 1.0],
+        "iss_color": [1.0, 0.3, 0.3],
+        "home_color": [1.0, 0.8, 0.2],
+        "footprint_color": [0.0, 0.9, 0.8],
+    },
+    "cyberpunk-cyan": {
+        "bg_chassis": "#0a0a14",
+        "bg_panel": "#121224",
+        "bg_card": "#0d0d1a",
+        "bg_input": "#06060f",
+        "bg_selected": "#24102e",
+        "accent": "#00ffff",
+        "accent_dim": "#ff007f",
+        "text_primary": "#00ffff",
+        "text_secondary": "#ff007f",
+        "text_dim": "#664477",
+        "border_color": "#00ffff",
+        "border_dim": "#331144",
+        "map_land": [0.12, 0.08, 0.22],
+        "map_coast": [0.35, 0.15, 0.55],
+        "map_grid": [0.10, 0.06, 0.18],
+        "orbit_color": [0.0, 1.0, 1.0],
+        "iss_color": [1.0, 0.0, 0.5],
+        "home_color": [0.0, 1.0, 0.5],
+        "footprint_color": [1.0, 0.0, 0.5],
+    },
+}
+
+def get_current_theme():
+    theme_file = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.isfile(theme_file):
+        try:
+            with open(theme_file, "r") as f:
+                theme = f.read().strip()
+                if theme in THEMES:
+                    return theme
+        except Exception:
+            pass
+    return "nasa"
+
+class IssConsoleWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="ISS Mission Control Console")
+        self.set_default_size(960, 580)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_wmclass("space-iss-dialog", "space-iss-dialog")
+        self.set_decorated(False)
+        self.set_resizable(False)
+
+        self.theme_name = get_current_theme()
+        self.theme = THEMES.get(self.theme_name, THEMES["nasa"])
+
+        self.coastlines = self._load_coastlines()
+        self.telemetry = {}
+        self.pulse_phase = 0.0
+
+        self.apply_theme_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+        # Initial fetch & timer tick (every 2 seconds)
+        self.fetch_telemetry()
+        GLib.timeout_add(2000, self._on_timer_tick)
+        GLib.timeout_add(100, self._on_pulse_tick)
+
+    def _load_coastlines(self):
+        if os.path.isfile(COASTLINES_FILE):
+            try:
+                with open(COASTLINES_FILE, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return []
+
+    def fetch_telemetry(self):
+        try:
+            res = subprocess.run([TRACKER_BIN], capture_output=True, text=True, timeout=5)
+            self.telemetry = json.loads(res.stdout.strip())
+        except Exception:
+            self.telemetry = {"ok": False}
+        self.update_telemetry_ui()
+        self.map_area.queue_draw()
+
+    def _on_timer_tick(self):
+        self.fetch_telemetry()
+        return True
+
+    def _on_pulse_tick(self):
+        self.pulse_phase = (self.pulse_phase + 0.15) % (2.0 * math.pi)
+        self.map_area.queue_draw()
+        return True
+
+    def apply_theme_css(self):
+        t = self.theme
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', 'Space Mono', 'Monospace', monospace;
+            text-shadow: none;
+            box-shadow: none;
+            background-color: transparent;
+        }}
+        window, #main-window {{
+            background-color: {t['bg_chassis']};
+            color: {t['text_primary']};
+            border: 2px solid {t['border_color']};
+            border-radius: 4px;
+        }}
+        .header-panel {{
+            background-color: {t['bg_panel']};
+            border-bottom: 2px solid {t['border_color']};
+            padding: 10px 16px;
+        }}
+        .header-title {{
+            font-size: 13px;
+            font-weight: 900;
+            color: {t['accent']};
+            letter-spacing: 1.5px;
+        }}
+        .header-sub {{
+            font-size: 9px;
+            font-weight: 700;
+            color: {t['text_secondary']};
+        }}
+        .side-card {{
+            background-color: {t['bg_card']};
+            border: 1px solid {t['border_dim']};
+            border-radius: 3px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }}
+        .reg-title {{
+            font-size: 9px;
+            font-weight: 800;
+            color: {t['accent']};
+            margin-bottom: 4px;
+            letter-spacing: 0.5px;
+        }}
+        .reg-value {{
+            font-size: 14px;
+            font-weight: 900;
+            color: {t['text_primary']};
+            letter-spacing: 1px;
+        }}
+        .reg-sub {{
+            font-size: 8.5px;
+            color: {t['text_dim']};
+        }}
+        .status-badge {{
+            font-size: 9px;
+            font-weight: 900;
+            padding: 3px 6px;
+            border-radius: 2px;
+        }}
+        .status-nominal {{
+            background-color: {t['bg_input']};
+            border: 1px solid {t['border_color']};
+            color: {t['accent']};
+        }}
+        .status-acquired {{
+            background-color: #ff0055;
+            border: 1px solid #ff0055;
+            color: #ffffff;
+        }}
+        button,
+        button *,
+        .action-btn,
+        .close-btn {{
+            background-color: {t['bg_input']};
+            background-image: none;
+            border: 1px solid {t['border_dim']};
+            color: {t['text_primary']};
+            font-size: 9.5px;
+            font-weight: 800;
+            border-radius: 2px;
+            padding: 5px 10px;
+            box-shadow: none;
+            text-shadow: none;
+            outline: none;
+        }}
+        button:hover,
+        .action-btn:hover,
+        .close-btn:hover {{
+            background-color: {t['bg_selected']};
+            background-image: none;
+            border: 1px solid {t['accent']};
+            color: {t['accent']};
+        }}
+        button:active,
+        .action-btn:active,
+        .close-btn:active {{
+            background-color: {t['accent_dim']};
+            background-image: none;
+            border: 1px solid {t['accent']};
+            color: {t['bg_chassis']};
+        }}
+        button:focus,
+        button:focus:hover {{
+            outline: none;
+            box-shadow: none;
+        }}
+        entry,
+        entry * {{
+            background-color: {t['bg_input']};
+            background-image: none;
+            color: {t['text_primary']};
+            border: 1px solid {t['border_dim']};
+            border-radius: 2px;
+            padding: 5px 8px;
+            font-size: 10px;
+            box-shadow: none;
+            text-shadow: none;
+            outline: none;
+        }}
+        entry:focus {{
+            border: 1px solid {t['accent']};
+        }}
+        .status-bar {{
+            font-size: 8.5px;
+            color: {t['text_dim']};
+            padding: 6px 14px;
+            background-color: {t['bg_panel']};
+            border-top: 1px solid {t['border_dim']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+
+    def build_ui(self):
+        self.set_name("main-window")
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(main_box)
+
+        # Header Panel
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-panel")
+
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        title = Gtk.Label(label="🛰️ ISS ORBITAL TELEMETRY // MISSION CONTROL CONSOLE")
+        title.set_xalign(0.0)
+        title.get_style_context().add_class("header-title")
+        title_box.pack_start(title, True, True, 0)
+
+        btn_close = Gtk.Button(label="[ ESC ]")
+        btn_close.get_style_context().add_class("close-btn")
+        btn_close.connect("clicked", lambda b: self.close_window())
+        title_box.pack_end(btn_close, False, False, 0)
+
+        header.pack_start(title_box, False, False, 0)
+
+        sub = Gtk.Label(label="APOLLO GUIDANCE TELEMETRY & WORLD PROJECTION // NORAD CAT ID: 25544")
+        sub.set_xalign(0.0)
+        sub.get_style_context().add_class("header-sub")
+        header.pack_start(sub, False, False, 0)
+
+        main_box.pack_start(header, False, False, 0)
+
+        # Central Split Body: Map Area (Left) + Telemetry Instrumentation (Right)
+        body_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        body_box.set_margin_start(12)
+        body_box.set_margin_end(12)
+        body_box.set_margin_top(8)
+        body_box.set_margin_bottom(8)
+        main_box.pack_start(body_box, True, True, 0)
+
+        # Left: Cairo Map Area
+        map_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        map_card.get_style_context().add_class("side-card")
+        map_card.set_hexpand(True)
+        map_card.set_vexpand(True)
+
+        self.map_area = Gtk.DrawingArea()
+        self.map_area.set_size_request(600, 360)
+        self.map_area.connect("draw", self.on_draw_map)
+        map_card.pack_start(self.map_area, True, True, 0)
+        body_box.pack_start(map_card, True, True, 0)
+
+        # Right: Telemetry Controls & Registers
+        right_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        right_panel.set_size_request(300, -1)
+        body_box.pack_start(right_panel, False, False, 0)
+
+        # Register Card 1: Coordinates & Altitude
+        card_pos = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        card_pos.get_style_context().add_class("side-card")
+        
+        lbl_p_title = Gtk.Label(label="ORBITAL POSITION & ALTITUDE")
+        lbl_p_title.set_xalign(0.0)
+        lbl_p_title.get_style_context().add_class("reg-title")
+        card_pos.pack_start(lbl_p_title, False, False, 0)
+
+        self.lbl_coords = Gtk.Label(label="--° --°")
+        self.lbl_coords.set_xalign(0.0)
+        self.lbl_coords.get_style_context().add_class("reg-value")
+        card_pos.pack_start(self.lbl_coords, False, False, 0)
+
+        self.lbl_alt_vel = Gtk.Label(label="ALT: --- km // VEL: --- km/h (Mach --)")
+        self.lbl_alt_vel.set_xalign(0.0)
+        self.lbl_alt_vel.get_style_context().add_class("reg-sub")
+        card_pos.pack_start(self.lbl_alt_vel, False, False, 0)
+        right_panel.pack_start(card_pos, False, False, 0)
+
+        # Register Card 2: Pass Prediction & Footprint
+        card_pass = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        card_pass.get_style_context().add_class("side-card")
+
+        lbl_pass_title = Gtk.Label(label="BASE LOCATION & PASS STATUS")
+        lbl_pass_title.set_xalign(0.0)
+        lbl_pass_title.get_style_context().add_class("reg-title")
+        card_pass.pack_start(lbl_pass_title, False, False, 0)
+
+        self.lbl_base_loc = Gtk.Label(label="BASE: NOT CONFIGURED")
+        self.lbl_base_loc.set_xalign(0.0)
+        self.lbl_base_loc.get_style_context().add_class("reg-value")
+        self.lbl_base_loc.set_line_wrap(True)
+        card_pass.pack_start(self.lbl_base_loc, False, False, 0)
+
+        self.lbl_pass_time = Gtk.Label(label="NEXT PASS: NO PASS IN 24H")
+        self.lbl_pass_time.set_xalign(0.0)
+        self.lbl_pass_time.get_style_context().add_class("reg-sub")
+        card_pass.pack_start(self.lbl_pass_time, False, False, 0)
+
+        self.lbl_pass_flare = Gtk.Label(label="SIGHTING: STANDBY")
+        self.lbl_pass_flare.set_xalign(0.0)
+        self.lbl_pass_flare.get_style_context().add_class("reg-sub")
+        card_pass.pack_start(self.lbl_pass_flare, False, False, 0)
+
+        self.lbl_pass_status = Gtk.Label(label="STATUS: STANDBY")
+        self.lbl_pass_status.set_xalign(0.0)
+        self.lbl_pass_status.get_style_context().add_class("status-badge")
+        self.lbl_pass_status.get_style_context().add_class("status-nominal")
+        card_pass.pack_start(self.lbl_pass_status, False, False, 0)
+        right_panel.pack_start(card_pass, False, False, 0)
+
+        # Config Card 3: City Configurator
+        card_cfg = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card_cfg.get_style_context().add_class("side-card")
+
+        lbl_c_title = Gtk.Label(label="SET HOME BASE CITY")
+        lbl_c_title.set_xalign(0.0)
+        lbl_c_title.get_style_context().add_class("reg-title")
+        card_cfg.pack_start(lbl_c_title, False, False, 0)
+
+        self.entry_city = Gtk.Entry()
+        self.entry_city.set_placeholder_text("Enter City (e.g. Houston, London)...")
+        self.entry_city.connect("activate", self.on_set_city)
+        card_cfg.pack_start(self.entry_city, False, False, 0)
+
+        btn_grid = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        btn_set = Gtk.Button(label="[ SET ]")
+        btn_set.get_style_context().add_class("action-btn")
+        btn_set.connect("clicked", self.on_set_city)
+        btn_grid.pack_start(btn_set, True, True, 0)
+
+        btn_clear = Gtk.Button(label="[ CLEAR ]")
+        btn_clear.get_style_context().add_class("action-btn")
+        btn_clear.connect("clicked", self.on_clear_city)
+        btn_grid.pack_start(btn_clear, True, True, 0)
+
+        btn_refresh = Gtk.Button(label="[ 🔄 TLE ]")
+        btn_refresh.get_style_context().add_class("action-btn")
+        btn_refresh.connect("clicked", self.on_refresh_tle)
+        btn_grid.pack_start(btn_refresh, True, True, 0)
+
+        card_cfg.pack_start(btn_grid, False, False, 0)
+        right_panel.pack_start(card_cfg, False, False, 0)
+
+        # Footer Status
+        self.lbl_footer = Gtk.Label(label="TLE: ACTIVE // PROJECTION: 19-NODE ORBIT TRACK // [ESC] TO EXIT")
+        self.lbl_footer.set_xalign(0.0)
+        self.lbl_footer.get_style_context().add_class("status-bar")
+        main_box.pack_end(self.lbl_footer, False, False, 0)
+
+    def update_telemetry_ui(self):
+        d = self.telemetry
+        if not d.get("ok"):
+            self.lbl_coords.set_text("OFFLINE")
+            self.lbl_alt_vel.set_text("Waiting for orbital feed...")
+            return
+
+        lat = float(d.get("latitude", 0))
+        lon = float(d.get("longitude", 0))
+        alt = float(d.get("altitude", 0))
+        vel = float(d.get("velocity", 0))
+        vis = str(d.get("visibility", "unknown")).upper()
+        mach = vel / 1234.8
+
+        lat_d = "N" if lat >= 0 else "S"
+        lon_d = "E" if lon >= 0 else "W"
+        self.lbl_coords.set_text(f"{abs(lat):.2f}°{lat_d}  {abs(lon):.2f}°{lon_d}")
+        self.lbl_alt_vel.set_text(f"ALT: {alt:.1f} km // VEL: {vel:,.0f} km/h (M{mach:.1f}) // {vis}")
+
+        loc = d.get("user_location", {})
+        if loc.get("configured"):
+            self.lbl_base_loc.set_text(loc.get("city", "HOME BASE"))
+        else:
+            self.lbl_base_loc.set_text("BASE: NOT CONFIGURED")
+
+        np = d.get("next_pass", {})
+        if np.get("available"):
+            cd = np.get("countdown", 0)
+            hrs = cd // 3600
+            mins = (cd % 3600) // 60
+            dur = np.get("duration", 0)
+            self.lbl_pass_time.set_text(f"NEXT PASS: in {hrs}h {mins:02d}m (Dur: {dur//60}m {dur%60:02d}s)")
+            fl = np.get("flare", {})
+            self.lbl_pass_flare.set_text(f"OPTICAL: {fl.get('label', 'Radio Only')}")
+
+            if np.get("current"):
+                self.lbl_pass_status.set_text("STATUS: [ ⚡ ISS ACQUIRED IN FOOTPRINT ]")
+                self.lbl_pass_status.get_style_context().remove_class("status-nominal")
+                self.lbl_pass_status.get_style_context().add_class("status-acquired")
+            else:
+                self.lbl_pass_status.set_text("STATUS: [ TRACKING NOMINAL ]")
+                self.lbl_pass_status.get_style_context().remove_class("status-acquired")
+                self.lbl_pass_status.get_style_context().add_class("status-nominal")
+        else:
+            self.lbl_pass_time.set_text("NEXT PASS: NO PASS IN 24H")
+            self.lbl_pass_flare.set_text("OPTICAL: STANDBY")
+            self.lbl_pass_status.set_text("STATUS: [ OUT OF FOOTPRINT RANGE ]")
+            self.lbl_pass_status.get_style_context().remove_class("status-acquired")
+            self.lbl_pass_status.get_style_context().add_class("status-nominal")
+
+    def on_draw_map(self, widget, cr):
+        t = self.theme
+        avail_w = widget.get_allocated_width()
+        avail_h = widget.get_allocated_height()
+
+        # Canvas Outer Background
+        cr.set_source_rgb(0.02, 0.03, 0.05)
+        cr.paint()
+
+        # Strict 2:1 Equirectangular Aspect Ratio (360° Lon : 180° Lat)
+        target_aspect = 2.0
+        pad = 6.0
+        canvas_w = max(10.0, avail_w - 2 * pad)
+        canvas_h = max(10.0, avail_h - 2 * pad)
+
+        if canvas_w / canvas_h > target_aspect:
+            map_h = canvas_h
+            map_w = map_h * target_aspect
+        else:
+            map_w = canvas_w
+            map_h = map_w / target_aspect
+
+        map_x0 = pad + (canvas_w - map_w) / 2.0
+        map_y0 = pad + (canvas_h - map_h) / 2.0
+
+        def map_coords(lon, lat):
+            x = map_x0 + ((lon + 180.0) / 360.0) * map_w
+            y = map_y0 + ((90.0 - lat) / 180.0) * map_h
+            return x, y
+
+        # 1. Map Frame & Ocean Background
+        cr.save()
+        cr.rectangle(map_x0, map_y0, map_w, map_h)
+        cr.set_source_rgb(0.04, 0.06, 0.09)
+        cr.fill_preserve()
+        cr.set_source_rgba(0.2, 0.3, 0.45, 0.8)
+        cr.set_line_width(1.0)
+        cr.stroke()
+        cr.restore()
+
+        # Clip all rendering strictly inside the 2:1 map rectangle
+        cr.save()
+        cr.rectangle(map_x0, map_y0, map_w, map_h)
+        cr.clip()
+
+        # 2. Draw Lat/Lon Grid Lines
+        cr.set_source_rgba(t['map_grid'][0], t['map_grid'][1], t['map_grid'][2], 0.7)
+        cr.set_line_width(0.7)
+        for lat_g in [-60, -30, 0, 30, 60]:
+            _, y = map_coords(0, lat_g)
+            cr.move_to(map_x0, y)
+            cr.line_to(map_x0 + map_w, y)
+            cr.stroke()
+        for lon_g in [-120, -60, 0, 60, 120]:
+            x, _ = map_coords(lon_g, 0)
+            cr.move_to(x, map_y0)
+            cr.line_to(x, map_y0 + map_h)
+            cr.stroke()
+
+        # Equator & Prime Meridian Emphasis
+        cr.set_source_rgba(t['map_coast'][0], t['map_coast'][1], t['map_coast'][2], 0.4)
+        _, eq_y = map_coords(0, 0)
+        cr.move_to(map_x0, eq_y)
+        cr.line_to(map_x0 + map_w, eq_y)
+        cr.stroke()
+
+        # 3. Draw Coastlines
+        cr.set_source_rgb(t['map_coast'][0], t['map_coast'][1], t['map_coast'][2])
+        cr.set_line_width(0.85)
+        for poly in self.coastlines:
+            if not poly or len(poly) < 2:
+                continue
+            fx, fy = map_coords(poly[0][0], poly[0][1])
+            cr.move_to(fx, fy)
+            prev_pt = poly[0]
+            for pt in poly[1:]:
+                px, py = map_coords(pt[0], pt[1])
+                # Prevent wrap lines across antimeridian
+                if abs(pt[0] - prev_pt[0]) < 180:
+                    cr.line_to(px, py)
+                else:
+                    cr.move_to(px, py)
+                prev_pt = pt
+            cr.stroke()
+
+        d = self.telemetry
+        if d.get("ok"):
+            # 4. Draw 19-Point Orbit Ground Track Projection
+            orbit = d.get("orbit", [])
+            if len(orbit) >= 2:
+                cr.set_source_rgba(t['orbit_color'][0], t['orbit_color'][1], t['orbit_color'][2], 0.8)
+                cr.set_dash([4.0, 3.0])
+                cr.set_line_width(1.3)
+                for i in range(len(orbit) - 1):
+                    p1 = orbit[i]
+                    p2 = orbit[i + 1]
+                    x1, y1 = map_coords(p1["longitude"], p1["latitude"])
+                    x2, y2 = map_coords(p2["longitude"], p2["latitude"])
+                    # Avoid antimeridian wrap jump
+                    if abs(p2["longitude"] - p1["longitude"]) < 180:
+                        cr.move_to(x1, y1)
+                        cr.line_to(x2, y2)
+                        cr.stroke()
+                cr.set_dash([])
+
+            # 5. Draw Home Base Location
+            loc = d.get("user_location", {})
+            if loc.get("configured"):
+                hx, hy = map_coords(loc["longitude"], loc["latitude"])
+                cr.set_source_rgb(t['home_color'][0], t['home_color'][1], t['home_color'][2])
+                cr.arc(hx, hy, 3.5, 0, 2 * math.pi)
+                cr.fill()
+                cr.arc(hx, hy, 7.5, 0, 2 * math.pi)
+                cr.set_line_width(1.0)
+                cr.stroke()
+
+                # Target Pin Crosshairs
+                cr.move_to(hx - 9, hy)
+                cr.line_to(hx + 9, hy)
+                cr.move_to(hx, hy - 9)
+                cr.line_to(hx, hy + 9)
+                cr.stroke()
+
+            # 6. Draw ISS Visibility Footprint
+            iss_lat = float(d.get("latitude", 0))
+            iss_lon = float(d.get("longitude", 0))
+            ix, iy = map_coords(iss_lon, iss_lat)
+
+            footprint_rad_px = (2200.0 / 40075.0) * map_w
+            cr.set_source_rgba(t['footprint_color'][0], t['footprint_color'][1], t['footprint_color'][2], 0.12)
+            cr.arc(ix, iy, footprint_rad_px, 0, 2 * math.pi)
+            cr.fill()
+
+            cr.set_source_rgba(t['footprint_color'][0], t['footprint_color'][1], t['footprint_color'][2], 0.6)
+            cr.set_line_width(1.0)
+            cr.arc(ix, iy, footprint_rad_px, 0, 2 * math.pi)
+            cr.stroke()
+
+            # 7. Draw ISS Satellite Marker & Pulsing Beacon
+            pulse_r = 5.5 + 3.5 * math.sin(self.pulse_phase)
+            cr.set_source_rgba(t['iss_color'][0], t['iss_color'][1], t['iss_color'][2], 0.35)
+            cr.arc(ix, iy, pulse_r, 0, 2 * math.pi)
+            cr.fill()
+
+            # Core ISS Icon
+            cr.set_source_rgb(t['iss_color'][0], t['iss_color'][1], t['iss_color'][2])
+            cr.rectangle(ix - 3, iy - 3, 6, 6)
+            cr.fill()
+
+            # Solar Panels
+            cr.set_line_width(1.2)
+            cr.move_to(ix - 7, iy)
+            cr.line_to(ix + 7, iy)
+            cr.move_to(ix, iy - 7)
+            cr.line_to(ix, iy + 7)
+            cr.stroke()
+
+        cr.restore()
+
+    def on_set_city(self, widget):
+        city = self.entry_city.get_text().strip()
+        if city:
+            self.lbl_footer.set_text(f"GEOCODING: '{city}'...")
+            subprocess.run([TRACKER_BIN, "--set-city", city], check=False)
+            subprocess.run(["space-quindar", "outro"], check=False)
+            self.entry_city.set_text("")
+            self.fetch_telemetry()
+
+    def on_clear_city(self, widget):
+        subprocess.run([TRACKER_BIN, "--clear-city"], check=False)
+        subprocess.run(["space-quindar", "beep"], check=False)
+        self.fetch_telemetry()
+
+    def on_refresh_tle(self, widget):
+        self.lbl_footer.set_text("UPDATING TLE FROM CELESTRAK...")
+        subprocess.run([TRACKER_BIN, "--fetch-tle"], check=False)
+        subprocess.run(["space-quindar", "beep"], check=False)
+        self.fetch_telemetry()
+
+    def on_key_press(self, widget, event):
+        if event.keyval in [Gdk.KEY_Escape, Gdk.KEY_q, Gdk.KEY_Q]:
+            self.close_window()
+            return True
+        return False
+
+    def close_window(self):
+        Gtk.main_quit()
+
+def main():
+    win = IssConsoleWindow()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""
+====================================================================
+ 🛰️ SPACE MISSION CONTROL: WAYBAR ISS TELEMETRY FEED
+====================================================================
+ Queries spaceera-iss-tracker and formats live status for Waybar
+====================================================================
+"""
+
+import sys
+import os
+import json
+import time
+import subprocess
+
+def check_and_dispatch_alerts(data):
+    next_pass = data.get("next_pass", {})
+    if not next_pass.get("available"):
+        return
+
+    pass_start = next_pass.get("start", 0)
+    is_current = next_pass.get("current", False)
+    countdown = next_pass.get("countdown", 0)
+    duration = next_pass.get("duration", 0)
+    min_dist = next_pass.get("min_distance_km", 0)
+    user_city = data.get("user_location", {}).get("city", "HOME BASE")
+
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/user-{os.getuid()}"
+    state_file = os.path.join(runtime_dir, "omarchy-spaceera-iss-tracker", "pass_alert.json")
+    os.makedirs(os.path.dirname(state_file), exist_ok=True)
+
+    state = {}
+    if os.path.isfile(state_file):
+        try:
+            with open(state_file, "r") as f:
+                state = json.load(f)
+        except Exception:
+            state = {}
+
+    last_pass_start = state.get("pass_start", 0)
+    last_phase = state.get("phase", "none")
+
+    # Reset phase only if the pass start differs by more than 10 minutes (new orbit pass)
+    if abs(pass_start - last_pass_start) > 600:
+        last_pass_start = pass_start
+        last_phase = "none"
+
+    quindar_bin = os.path.expanduser("~/.local/bin/space-quindar")
+
+    # Phase 1: 10-Minute Approach Warning
+    flare_data = next_pass.get("flare", {})
+    is_flare = flare_data.get("is_flare", False)
+    flare_label = flare_data.get("label", "Radio Tracking")
+
+    if 0 < countdown <= 600 and last_phase == "none":
+        last_phase = "10min_warning"
+        dur_min = duration // 60
+        dur_sec = duration % 60
+        if is_flare:
+            title = "⭐ ISS VISUAL FLARE IN 10 MINUTES"
+            msg = f"Naked-eye sighting window ({flare_label}) over {user_city}!\nApproach: {min_dist:,} km | Duration: {dur_min}m {dur_sec:02d}s\nPrepare outdoor visual observation."
+            urg = "critical"
+        else:
+            title = "🛰️ ISS PASS IN 10 MINUTES"
+            msg = f"Base: {user_city} | Approach: {min_dist:,} km | Duration: {dur_min}m {dur_sec:02d}s\nRadio tracking contact window opening."
+            urg = "normal"
+
+        subprocess.run([
+            "notify-send",
+            "-a", "ISS Mission Control",
+            "-i", "preferences-system-network",
+            "-u", urg,
+            "-t", "10000",
+            "-h", "string:x-canonical-private-synchronous:iss-pass",
+            title, msg
+        ], check=False)
+        if os.path.isfile(quindar_bin):
+            subprocess.run([quindar_bin, "intro"], check=False)
+
+    # Phase 2: Overhead Acquisition (In footprint)
+    elif is_current and last_phase in ("none", "10min_warning"):
+        last_phase = "acquired"
+        alt = data.get("altitude", 420)
+        vel = data.get("velocity", 27570)
+        mach = vel / 1234.8
+        if is_flare:
+            title = "⭐ ISS VISUAL FLARE OVERHEAD"
+            msg = f"Station blazing overhead at {alt:.1f} km (Mach {mach:.1f})!\n{flare_label} active over {user_city}."
+        else:
+            title = "🛰️ ISS ACQUIRED IN FOOTPRINT"
+            msg = f"Station directly overhead at {alt:.1f} km (Mach {mach:.1f}).\nGround footprint active over {user_city}."
+
+        subprocess.run([
+            "notify-send",
+            "-a", "ISS Mission Control",
+            "-i", "preferences-system-network",
+            "-u", "critical",
+            "-t", "12000",
+            "-h", "string:x-canonical-private-synchronous:iss-pass",
+            title, msg
+        ], check=False)
+        if os.path.isfile(quindar_bin):
+            subprocess.run([quindar_bin, "acquired"], check=False)
+
+    state = {
+        "pass_start": last_pass_start,
+        "phase": last_phase,
+        "updated_at": time.time()
+    }
+    try:
+        with open(state_file, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass
+
+def format_coords(lat, lon):
+    lat_dir = "N" if lat >= 0 else "S"
+    lon_dir = "E" if lon >= 0 else "W"
+    return f"{abs(lat):.1f}°{lat_dir} {abs(lon):.1f}°{lon_dir}"
+
+def format_time_diff(seconds):
+    if seconds <= 0:
+        return "NOW"
+    hrs = seconds // 3600
+    mins = (seconds % 3600) // 60
+    if hrs > 0:
+        return f"{hrs}h {mins:02d}m"
+    return f"{mins}m"
+
+def main():
+    tracker_bin = os.path.expanduser("~/.local/bin/spaceera-iss-tracker")
+    try:
+        res = subprocess.run([tracker_bin], capture_output=True, text=True, timeout=5)
+        raw = res.stdout.strip()
+        data = json.loads(raw)
+    except Exception:
+        data = {"ok": False}
+
+    if not data.get("ok"):
+        out = {
+            "text": "ISS-TRK [ OFF ]",
+            "tooltip": "🛰️ INTERNATIONAL SPACE STATION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• STATUS : TELEMETRY OFFLINE\n• Click  : Open ISS Mission Console\n• R-Click: Refresh TLE",
+            "class": "iss-offline"
+        }
+        print(json.dumps(out))
+        return
+
+    # Check and dispatch pass approach & acquisition alerts
+    check_and_dispatch_alerts(data)
+
+    lat = float(data.get("latitude", 0))
+    lon = float(data.get("longitude", 0))
+    alt = float(data.get("altitude", 0))
+    vel = float(data.get("velocity", 0))
+    vis = str(data.get("visibility", "unknown")).upper()
+    coord_str = format_coords(lat, lon)
+
+    user_loc = data.get("user_location", {})
+    city_name = user_loc.get("city", "UNCONFIGURED") if user_loc.get("configured") else "NOT CONFIGURED"
+
+    next_pass = data.get("next_pass", {})
+    is_acquired = next_pass.get("current", False)
+    pass_avail = next_pass.get("available", False)
+    countdown = next_pass.get("countdown", 0)
+    duration = next_pass.get("duration", 0)
+    min_dist = next_pass.get("min_distance_km", 0)
+    radius_km = next_pass.get("radius_km", 0)
+    flare_data = next_pass.get("flare", {})
+    is_flare = flare_data.get("is_flare", False)
+    flare_label = flare_data.get("label", "Radio Only")
+
+    # Status text for top bar (Mission Control Console nomenclature)
+    if is_acquired:
+        bar_text = "ISS-TRK [ ACQ ]"
+        bar_class = "iss-acquired"
+    elif pass_avail and 0 < countdown <= 1800:
+        if is_flare:
+            bar_text = f"ISS-TRK [⭐-{format_time_diff(countdown)}]"
+            bar_class = "iss-flare"
+        else:
+            bar_text = f"ISS-TRK [-{format_time_diff(countdown)}]"
+            bar_class = "iss-approaching"
+    else:
+        bar_text = "ISS-TRK"
+        bar_class = "iss-nominal"
+
+    pass_summary = "NO PASS IN 24H HORIZON"
+    if pass_avail:
+        pass_summary = f"in {format_time_diff(countdown)} (Duration: {duration // 60}m {duration % 60:02d}s)"
+
+    mach_vel = vel / 1234.8
+
+    tooltip = (
+        f"🛰️ INTERNATIONAL SPACE STATION // ORBITAL TELEMETRY\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• POSITION     : {coord_str} ({lat:.4f}, {lon:.4f})\n"
+        f"• ALTITUDE     : {alt:.1f} km ({alt * 0.621371:.1f} mi)\n"
+        f"• VELOCITY     : {vel:,.0f} km/h (Mach {mach_vel:.1f})\n"
+        f"• ILLUMINATION : {vis}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📍 BASE LOC    : {city_name}\n"
+        f"⏱️ NEXT PASS   : {pass_summary}\n"
+        f"🔭 SIGHTING    : {flare_label}\n"
+        f"📡 MIN DISTANCE: {min_dist:,} km (Footprint: {radius_km:,} km)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• Click        : Open ISS Mission Control Console\n"
+        f"• Right-Click  : Force Refresh TLE and Orbital Calculation"
+    )
+
+    out = {
+        "text": bar_text,
+        "tooltip": tooltip,
+        "class": bar_class
+    }
+    print(json.dumps(out))
+
+if __name__ == "__main__":
+    main()

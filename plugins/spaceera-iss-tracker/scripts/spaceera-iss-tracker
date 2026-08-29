@@ -375,22 +375,122 @@ def propagate_tle(tle, target_time):
         "longitude": round(lon, 5),
         "altitude": round(alt, 1),
         "velocity": round(velocity, 1),
-        "timestamp": int(target_time)
+        "timestamp": int(target_time),
+        "X": X, "Y": Y, "Z": Z, "r": r
+    }
+
+def get_sun_data(target_time):
+    jd = target_time / 86400.0 + 2440587.5
+    T = (jd - 2451545.0) / 36525.0
+    l0 = (280.46646 + 36000.76983 * T) % 360.0
+    m = (357.52911 + 35999.05029 * T) % 360.0
+    m_rad = math.radians(m)
+    c = (1.914602 - 0.004817 * T) * math.sin(m_rad) + (0.019993 - 0.000101 * T) * math.sin(2 * m_rad) + 0.000289 * math.sin(3 * m_rad)
+    sun_lon = math.radians((l0 + c) % 360.0)
+    eps = math.radians(23.439291 - 0.0130042 * T)
+    
+    d_j2000 = (target_time - 946728000.0) / 86400.0
+    gmst = math.radians((280.46061837 + 360.98564736629 * d_j2000) % 360)
+    
+    dec = math.asin(math.sin(eps) * math.sin(sun_lon))
+    ra = math.atan2(math.cos(eps) * math.sin(sun_lon), math.cos(sun_lon))
+    sun_lon_ecef = ra - gmst
+    
+    sx = math.cos(dec) * math.cos(sun_lon_ecef)
+    sy = math.cos(dec) * math.sin(sun_lon_ecef)
+    sz = math.sin(dec)
+    
+    sub_lon = math.degrees(sun_lon_ecef % (2 * math.pi))
+    if sub_lon > 180: sub_lon -= 360
+    sub_lat = math.degrees(dec)
+    
+    return {"sub_lat": sub_lat, "sub_lon": sub_lon, "s_vec": (sx, sy, sz)}
+
+def check_pass_visibility(user_lat_deg, user_lon_deg, sat_pos):
+    t = sat_pos["timestamp"]
+    sun = get_sun_data(t)
+    
+    u_lat = math.radians(user_lat_deg)
+    u_lon = math.radians(user_lon_deg)
+    s_lat = math.radians(sun["sub_lat"])
+    s_lon = math.radians(sun["sub_lon"])
+    
+    cos_zenith = math.sin(u_lat) * math.sin(s_lat) + math.cos(u_lat) * math.cos(s_lat) * math.cos(u_lon - s_lon)
+    sun_elev = 90.0 - math.degrees(math.acos(max(-1.0, min(1.0, cos_zenith))))
+    
+    sx, sy, sz = sun["s_vec"]
+    X, Y, Z = sat_pos["X"], sat_pos["Y"], sat_pos["Z"]
+    r = sat_pos["r"]
+    proj = X * sx + Y * sy + Z * sz
+    sat_sunlit = (proj > 0) or ((r * r - proj * proj) > (earth_radius_km * earth_radius_km))
+    
+    local_solar_hour = ((t + user_lon_deg * 240.0) % 86400.0) / 3600.0
+    
+    is_flare = False
+    flare_type = "NONE"
+    flare_label = "Radio Tracking Only"
+    
+    if not sat_sunlit:
+        flare_type = "ECLIPSED"
+        flare_label = "Earth Shadow (In Eclipse)"
+    elif sun_elev > -4.0:
+        flare_type = "DAYLIGHT"
+        flare_label = "Daylight Pass (Sun in Sky)"
+    else:
+        is_flare = True
+        if 16.0 <= local_solar_hour <= 22.0 or (sun_elev < 0 and 12.0 < local_solar_hour <= 24.0):
+            flare_type = "DUSK_FLARE"
+            flare_label = "⭐ Sunset Visual Flare (Naked Eye)"
+        elif 3.0 <= local_solar_hour <= 7.0 or (sun_elev < 0 and 0.0 <= local_solar_hour <= 12.0):
+            flare_type = "DAWN_FLARE"
+            flare_label = "⭐ Dawn Visual Flare (Naked Eye)"
+        else:
+            flare_type = "NIGHT_FLARE"
+            flare_label = "⭐ Night Visual Flare (Naked Eye)"
+            
+    return {
+        "is_flare": is_flare,
+        "type": flare_type,
+        "label": flare_label,
+        "sun_elev_deg": round(sun_elev, 1),
+        "sat_sunlit": sat_sunlit
     }
 
 if tle_data:
     current_pos = propagate_tle(tle_data, now)
     orbit_points = [propagate_tle(tle_data, now + offset) for offset in range(-2700, 2701, 300)]
     
+    # Calculate current ISS illumination state
+    cur_sun = get_sun_data(now)
+    cur_sx, cur_sy, cur_sz = cur_sun["s_vec"]
+    cur_proj = current_pos["X"] * cur_sx + current_pos["Y"] * cur_sy + current_pos["Z"] * cur_sz
+    cur_sunlit = (cur_proj > 0) or ((current_pos["r"]**2 - cur_proj**2) > (earth_radius_km**2))
+    current_illum = "daylight" if cur_sunlit else "eclipsed"
+
+    # Clean orbit points representation
+    clean_orbit = [
+        {"latitude": p["latitude"], "longitude": p["longitude"], "altitude": p["altitude"], "velocity": p["velocity"], "timestamp": p["timestamp"]}
+        for p in orbit_points
+    ]
+    
     # Predict next pass using TLE propagation
     pass_info = {
         "available": False, "current": False, "start": 0, "end": 0, "closest": 0,
-        "countdown": 0, "duration": 0, "min_distance_km": 0, "radius_km": 0, "horizon_hours": 24
+        "countdown": 0, "duration": 0, "min_distance_km": 0, "radius_km": 0, "horizon_hours": 24,
+        "flare": {
+            "is_flare": False,
+            "type": "NONE",
+            "label": "Standby",
+            "sun_elev_deg": 0.0,
+            "sat_sunlit": False
+        }
     }
     
     if loc.get("configured") is True:
-        user_lat = math.radians(float(loc.get("latitude", 0)))
-        user_lon = math.radians(float(loc.get("longitude", 0)))
+        u_lat_deg = float(loc.get("latitude", 0))
+        u_lon_deg = float(loc.get("longitude", 0))
+        user_lat = math.radians(u_lat_deg)
+        user_lon = math.radians(u_lon_deg)
         alt = current_pos["altitude"]
         visibility_radius = earth_radius_km * math.acos(earth_radius_km / (earth_radius_km + max(alt, 1.0)))
 
@@ -402,10 +502,11 @@ if tle_data:
             a = math.sin(dlat / 2)**2 + math.cos(user_lat) * math.cos(plat) * math.sin(dlon / 2)**2
             return earth_radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1 - a)))
 
-        # Sample future 24h at 120s steps
+        # Sample future 24h at 60s steps aligned to absolute minute grid
+        grid_start = now - (now % 60)
         samples = []
-        for step in range(0, 86401, 120):
-            t_sample = now + step
+        for step in range(0, 86401, 60):
+            t_sample = grid_start + step
             p_sample = propagate_tle(tle_data, t_sample)
             dist = distance_km(p_sample)
             samples.append((t_sample, dist, dist <= visibility_radius))
@@ -433,17 +534,22 @@ if tle_data:
 
         if in_pass and start_t is not None:
             end_t = last_t or start_t
+            peak_t = best_t or start_t
+            peak_pos = propagate_tle(tle_data, peak_t)
+            flare_info = check_pass_visibility(u_lat_deg, u_lon_deg, peak_pos)
+
             pass_info.update({
                 "available": True,
                 "current": start_t <= now + 120,
                 "start": start_t,
                 "end": end_t,
-                "closest": best_t or start_t,
+                "closest": peak_t,
                 "countdown": max(0, start_t - now),
                 "duration": max(0, end_t - start_t),
                 "min_distance_km": round(best_d or 0),
                 "radius_km": round(visibility_radius),
-                "horizon_hours": 24
+                "horizon_hours": 24,
+                "flare": flare_info
             })
 
     output = {
@@ -453,9 +559,9 @@ if tle_data:
         "longitude": current_pos["longitude"],
         "altitude": current_pos["altitude"],
         "velocity": current_pos["velocity"],
-        "visibility": "daylight",
+        "visibility": current_illum,
         "timestamp": current_pos["timestamp"],
-        "orbit": orbit_points,
+        "orbit": clean_orbit,
         "next_pass": pass_info,
         "tle_info": tle_info
     }

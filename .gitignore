@@ -1,2 +1,6 @@
 visual_ref/
 skills/
+
+__pycache__/
+*.pyc
+

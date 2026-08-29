@@ -1,0 +1,536 @@
+#!/usr/bin/env python3
+"""
+====================================================================
+ 🛸 SPACE MISSION CONTROL: SCREENSAVER & LOCKSCREEN CONFIGURATION
+====================================================================
+ - 100% Space Mission Control Theme Compliance (Zero-White-Background Policy)
+ - Segmented DSKY Chips for Timeout, Lockscreen, and Scene Sequencing
+ - ESC / Q Instant Exit, Enter to Save
+ - Live Daemon Reload on Save
+====================================================================
+"""
+
+import sys
+import os
+import json
+import subprocess
+import signal
+import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+
+CONFIG_DIR = os.path.expanduser("~/.config/space-screensaver")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+
+THEMES = {
+    "nasa": {
+        "bg_chassis": "#0a0d12",
+        "bg_panel": "#12161f",
+        "bg_card": "#0d1118",
+        "bg_input": "#06080b",
+        "bg_selected": "#241e0c",
+        "accent": "#ffb000",
+        "accent_dim": "#8c6200",
+        "text_primary": "#ffb000",
+        "text_secondary": "#c89220",
+        "text_dim": "#705a28",
+        "border_color": "#ffb000",
+        "border_dim": "#263040",
+        "radius": "3px",
+    },
+    "crt-amber": {
+        "bg_chassis": "#060709",
+        "bg_panel": "#0e1014",
+        "bg_card": "#090b0e",
+        "bg_input": "#030405",
+        "bg_selected": "#261908",
+        "accent": "#ff9e00",
+        "accent_dim": "#7a4c00",
+        "text_primary": "#ff9e00",
+        "text_secondary": "#c77c00",
+        "text_dim": "#734900",
+        "border_color": "#ff9e00",
+        "border_dim": "#402800",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg_chassis": "#040704",
+        "bg_panel": "#0a100a",
+        "bg_card": "#070c07",
+        "bg_input": "#020502",
+        "bg_selected": "#102610",
+        "accent": "#33ff33",
+        "accent_dim": "#156615",
+        "text_primary": "#33ff33",
+        "text_secondary": "#28cc28",
+        "text_dim": "#186618",
+        "border_color": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg_chassis": "#07100e",
+        "bg_panel": "#0e1e1a",
+        "bg_card": "#0a1714",
+        "bg_input": "#040b09",
+        "bg_selected": "#173830",
+        "accent": "#00f0d0",
+        "accent_dim": "#006657",
+        "text_primary": "#00f0d0",
+        "text_secondary": "#00bfa5",
+        "text_dim": "#1a5c52",
+        "border_color": "#00f0d0",
+        "border_dim": "#0e3830",
+        "radius": "2px",
+    },
+    "cyberpunk-cyan": {
+        "bg_chassis": "#0a0a14",
+        "bg_panel": "#121224",
+        "bg_card": "#0d0d1a",
+        "bg_input": "#06060f",
+        "bg_selected": "#24102e",
+        "accent": "#00ffff",
+        "accent_dim": "#ff007f",
+        "text_primary": "#00ffff",
+        "text_secondary": "#ff007f",
+        "text_dim": "#664477",
+        "border_color": "#00ffff",
+        "border_dim": "#331144",
+        "radius": "4px",
+    },
+}
+
+TIMEOUT_PRESETS = [
+    (0, "OFF / NEVER"),
+    (1, "1 MIN"),
+    (2, "2 MIN"),
+    (5, "5 MIN (DEF)"),
+    (10, "10 MIN"),
+    (15, "15 MIN"),
+    (30, "30 MIN"),
+    (60, "1 HOUR"),
+]
+
+SCENE_PRESETS = [
+    ("all", "1. ALL SCENES (CYCLE)"),
+    ("arch", "2. ARCH ORBIT"),
+    ("nasa", "3. NASA MEATBALL"),
+    ("lunar", "4. APOLLO LANDER"),
+    ("soviet", "5. SOVIET INSIGNIA"),
+    ("gagarin", "6. VOSTOK-1 GAGARIN"),
+]
+
+def get_current_theme():
+    theme_file = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.isfile(theme_file):
+        try:
+            with open(theme_file, "r") as f:
+                theme = f.read().strip()
+                if theme in THEMES:
+                    return theme
+        except Exception:
+            pass
+    return "nasa"
+
+def load_config():
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    if os.path.isfile(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "timeout_minutes": 5,
+        "lock_on_wake": False,
+        "scene_mode": "all"
+    }
+
+def save_config(cfg):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+    try:
+        subprocess.run(["pkill", "-USR1", "-x", "space-idle-daemon"], check=False)
+    except Exception:
+        pass
+
+class ScreensaverConfigWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Screensaver Configuration")
+        self.set_default_size(540, 520)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_wmclass("space-screensaver-config", "space-screensaver-config")
+        self.set_decorated(False)
+        self.set_resizable(False)
+
+        self.cfg = load_config()
+        self.theme_name = get_current_theme()
+        self.theme = THEMES.get(self.theme_name, THEMES["nasa"])
+
+        self.selected_timeout = self.cfg.get("timeout_minutes", 5)
+        self.selected_lock = self.cfg.get("lock_on_wake", False)
+        self.selected_scene = self.cfg.get("scene_mode", "all")
+
+        self.timeout_buttons = {}
+        self.scene_buttons = {}
+
+        self.apply_theme_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+    def apply_theme_css(self):
+        t = self.theme
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', 'Space Mono', 'Monospace', monospace;
+            text-shadow: none;
+            box-shadow: none;
+            background-color: transparent;
+        }}
+        window, #main-window, .background, window.background, dialog {{
+            background-color: {t['bg_chassis']};
+            background-image: none;
+            color: {t['text_primary']};
+            border: 2px solid {t['border_color']};
+            border-radius: {t['radius']};
+        }}
+        box, grid, viewport, scrolledwindow {{
+            background-color: transparent;
+            background-image: none;
+        }}
+        label {{
+            background-color: transparent;
+            background-image: none;
+        }}
+        .header-panel {{
+            background-color: {t['bg_panel']};
+            border-bottom: 2px solid {t['border_color']};
+            padding: 12px 18px;
+        }}
+        .header-title {{
+            font-size: 13px;
+            font-weight: 900;
+            color: {t['accent']};
+            letter-spacing: 1.5px;
+        }}
+        .header-sub {{
+            font-size: 9.5px;
+            font-weight: 700;
+            color: {t['text_secondary']};
+        }}
+        .content-box {{
+            padding: 14px 18px;
+            background-color: {t['bg_chassis']};
+        }}
+        .section-card {{
+            background-color: {t['bg_card']};
+            border: 1px solid {t['border_dim']};
+            border-radius: {t['radius']};
+            padding: 10px 12px;
+            margin-bottom: 10px;
+        }}
+        .section-title {{
+            font-size: 10px;
+            font-weight: 800;
+            color: {t['accent']};
+            margin-bottom: 3px;
+            letter-spacing: 0.5px;
+        }}
+        .section-desc {{
+            font-size: 8.5px;
+            color: {t['text_dim']};
+            margin-bottom: 6px;
+        }}
+        button.chip-btn {{
+            background-color: {t['bg_input']};
+            background-image: none;
+            border: 1px solid {t['border_dim']};
+            color: {t['text_secondary']};
+            font-size: 9px;
+            font-weight: 800;
+            padding: 5px 8px;
+            border-radius: {t['radius']};
+        }}
+        button.chip-btn:hover {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['accent_dim']};
+            color: {t['accent']};
+        }}
+        button.chip-btn.active {{
+            background-color: {t['accent']};
+            border: 1px solid {t['accent']};
+            color: {t['bg_chassis']};
+            font-weight: 900;
+        }}
+        button.toggle-btn {{
+            background-color: {t['bg_input']};
+            background-image: none;
+            border: 1px solid {t['border_dim']};
+            color: {t['text_secondary']};
+            font-size: 10px;
+            font-weight: 800;
+            padding: 7px 12px;
+            border-radius: {t['radius']};
+        }}
+        button.toggle-btn.active {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['accent']};
+            color: {t['accent']};
+        }}
+        button.action-btn {{
+            background-color: {t['bg_input']};
+            background-image: none;
+            border: 1px solid {t['border_dim']};
+            color: {t['text_primary']};
+            font-size: 9.5px;
+            font-weight: 800;
+            padding: 7px 12px;
+            border-radius: {t['radius']};
+        }}
+        button.action-btn:hover {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['accent']};
+            color: {t['accent']};
+        }}
+        button.save-btn {{
+            background-color: {t['accent']};
+            background-image: none;
+            border: 1px solid {t['accent']};
+            color: {t['bg_chassis']};
+            font-size: 10px;
+            font-weight: 900;
+            padding: 7px 16px;
+            border-radius: {t['radius']};
+        }}
+        button.save-btn:hover {{
+            background-color: {t['text_primary']};
+            color: #000000;
+        }}
+        .status-bar {{
+            font-size: 8.5px;
+            color: {t['text_dim']};
+            padding: 6px 14px;
+            background-color: {t['bg_panel']};
+            border-top: 1px solid {t['border_dim']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+
+    def build_ui(self):
+        self.set_name("main-window")
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(main_box)
+
+        # Header Panel
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-panel")
+        
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        title = Gtk.Label(label="MISSION CONTROL // SCREENSAVER & LOCK")
+        title.set_xalign(0.0)
+        title.get_style_context().add_class("header-title")
+        title_box.pack_start(title, True, True, 0)
+
+        btn_close = Gtk.Button(label="[ ESC ]")
+        btn_close.get_style_context().add_class("chip-btn")
+        btn_close.connect("clicked", lambda b: self.close_window())
+        title_box.pack_end(btn_close, False, False, 0)
+
+        header.pack_start(title_box, False, False, 0)
+
+        sub = Gtk.Label(label="DSKY P88 CONFIG // IDLE TIMEOUT & SECURITY PROTOCOLS")
+        sub.set_xalign(0.0)
+        sub.get_style_context().add_class("header-sub")
+        header.pack_start(sub, False, False, 0)
+
+        main_box.pack_start(header, False, False, 0)
+
+        # Content Box
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.get_style_context().add_class("content-box")
+        main_box.pack_start(content, True, True, 0)
+
+        # Card 1: Idle Timeout (Time before enter)
+        card_timeout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card_timeout.get_style_context().add_class("section-card")
+        
+        lbl_to = Gtk.Label(label="1. IDLE TIMEOUT (TIME BEFORE ENTERING SCREENSAVER)")
+        lbl_to.set_xalign(0.0)
+        lbl_to.get_style_context().add_class("section-title")
+        card_timeout.pack_start(lbl_to, False, False, 0)
+
+        desc_to = Gtk.Label(label="Select inactivity period before activating the 8-bit space screensaver:")
+        desc_to.set_xalign(0.0)
+        desc_to.get_style_context().add_class("section-desc")
+        card_timeout.pack_start(desc_to, False, False, 0)
+
+        # 4x2 Grid of Timeout Chips
+        grid_to = Gtk.Grid()
+        grid_to.set_column_spacing(6)
+        grid_to.set_row_spacing(6)
+        grid_to.set_hexpand(True)
+
+        for idx, (mins, label) in enumerate(TIMEOUT_PRESETS):
+            btn = Gtk.Button(label=label)
+            btn.get_style_context().add_class("chip-btn")
+            btn.set_hexpand(True)
+            if mins == self.selected_timeout:
+                btn.get_style_context().add_class("active")
+            btn.connect("clicked", self.on_timeout_clicked, mins)
+            self.timeout_buttons[mins] = btn
+            grid_to.attach(btn, idx % 4, idx // 4, 1, 1)
+
+        card_timeout.pack_start(grid_to, False, False, 0)
+        content.pack_start(card_timeout, False, False, 0)
+
+        # Card 2: Lock PC on Wake
+        card_lock = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card_lock.get_style_context().add_class("section-card")
+
+        lbl_lock = Gtk.Label(label="2. SECURITY // REQUIRE PASSWORD TO UNLOCK PC ON WAKE")
+        lbl_lock.set_xalign(0.0)
+        lbl_lock.get_style_context().add_class("section-title")
+        card_lock.pack_start(lbl_lock, False, False, 0)
+
+        desc_lock = Gtk.Label(label="When enabled, dismissing the screensaver immediately locks the screen via hyprlock:")
+        desc_lock.set_xalign(0.0)
+        desc_lock.get_style_context().add_class("section-desc")
+        card_lock.pack_start(desc_lock, False, False, 0)
+
+        self.btn_lock_toggle = Gtk.Button()
+        self.btn_lock_toggle.get_style_context().add_class("toggle-btn")
+        self.btn_lock_toggle.connect("clicked", self.on_lock_toggle_clicked)
+        self.update_lock_toggle_ui()
+        card_lock.pack_start(self.btn_lock_toggle, False, False, 0)
+        content.pack_start(card_lock, False, False, 0)
+
+        # Card 3: Scene Sequence Mode
+        card_scene = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card_scene.get_style_context().add_class("section-card")
+
+        lbl_sc = Gtk.Label(label="3. MISSION SCENE SEQUENCE SELECTION")
+        lbl_sc.set_xalign(0.0)
+        lbl_sc.get_style_context().add_class("section-title")
+        card_scene.pack_start(lbl_sc, False, False, 0)
+
+        desc_sc = Gtk.Label(label="Choose active retro 8-bit animation rotation mode:")
+        desc_sc.set_xalign(0.0)
+        desc_sc.get_style_context().add_class("section-desc")
+        card_scene.pack_start(desc_sc, False, False, 0)
+
+        # 2x2 Grid of Scene Chips
+        grid_sc = Gtk.Grid()
+        grid_sc.set_column_spacing(6)
+        grid_sc.set_row_spacing(6)
+        grid_sc.set_hexpand(True)
+
+        for idx, (mode_id, label) in enumerate(SCENE_PRESETS):
+            btn = Gtk.Button(label=label)
+            btn.get_style_context().add_class("chip-btn")
+            btn.set_hexpand(True)
+            if mode_id == self.selected_scene:
+                btn.get_style_context().add_class("active")
+            btn.connect("clicked", self.on_scene_clicked, mode_id)
+            self.scene_buttons[mode_id] = btn
+            grid_sc.attach(btn, idx % 2, idx // 2, 1, 1)
+
+        card_scene.pack_start(grid_sc, False, False, 0)
+        content.pack_start(card_scene, False, False, 0)
+
+        # Buttons Box
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_margin_top(4)
+
+        btn_test_ss = Gtk.Button(label="[ ⏵ PREVIEW SCREENSAVER ]")
+        btn_test_ss.get_style_context().add_class("action-btn")
+        btn_test_ss.connect("clicked", lambda b: subprocess.Popen(["space-screensaver"]))
+        btn_box.pack_start(btn_test_ss, False, False, 0)
+
+        btn_test_lock = Gtk.Button(label="[ 🔒 TEST HYPRLOCK ]")
+        btn_test_lock.get_style_context().add_class("action-btn")
+        btn_test_lock.connect("clicked", lambda b: subprocess.Popen(["hyprlock"]))
+        btn_box.pack_start(btn_test_lock, False, False, 0)
+
+        self.btn_save = Gtk.Button(label="[ 💾 APPLY & SAVE ]")
+        self.btn_save.get_style_context().add_class("save-btn")
+        self.btn_save.connect("clicked", self.on_save)
+        btn_box.pack_end(self.btn_save, False, False, 0)
+
+        content.pack_start(btn_box, False, False, 0)
+
+        # Status Footer
+        self.lbl_status = Gtk.Label(label=f"DAEMON: space-idle-daemon // THEME: {self.theme_name.upper()} // [ESC] TO CLOSE")
+        self.lbl_status.set_xalign(0.0)
+        self.lbl_status.get_style_context().add_class("status-bar")
+        main_box.pack_end(self.lbl_status, False, False, 0)
+
+    def on_timeout_clicked(self, btn, mins):
+        self.selected_timeout = mins
+        for m, b in self.timeout_buttons.items():
+            if m == mins:
+                b.get_style_context().add_class("active")
+            else:
+                b.get_style_context().remove_class("active")
+
+    def on_scene_clicked(self, btn, mode_id):
+        self.selected_scene = mode_id
+        for s_id, b in self.scene_buttons.items():
+            if s_id == mode_id:
+                b.get_style_context().add_class("active")
+            else:
+                b.get_style_context().remove_class("active")
+
+    def on_lock_toggle_clicked(self, btn):
+        self.selected_lock = not self.selected_lock
+        self.update_lock_toggle_ui()
+
+    def update_lock_toggle_ui(self):
+        if self.selected_lock:
+            self.btn_lock_toggle.set_label("[ 🔒 REQUIRE PASSWORD TO UNLOCK: ENABLED ]")
+            self.btn_lock_toggle.get_style_context().add_class("active")
+        else:
+            self.btn_lock_toggle.set_label("[ 🔓 REQUIRE PASSWORD TO UNLOCK: DISABLED (DIRECT WAKE) ]")
+            self.btn_lock_toggle.get_style_context().remove_class("active")
+
+    def on_save(self, btn=None):
+        new_cfg = {
+            "timeout_minutes": self.selected_timeout,
+            "lock_on_wake": self.selected_lock,
+            "scene_mode": self.selected_scene
+        }
+        save_config(new_cfg)
+        self.lbl_status.set_text(f"CONFIG SAVED // TIMEOUT: {self.selected_timeout}m // LOCK: {'ENABLED' if self.selected_lock else 'DISABLED'} // DAEMON NOTIFIED")
+
+        self.btn_save.set_label("[ SAVED! ]")
+        GLib.timeout_add(1200, lambda: self.btn_save.set_label("[ 💾 APPLY & SAVE ]") or False)
+
+    def on_key_press(self, widget, event):
+        if event.keyval in [Gdk.KEY_Escape, Gdk.KEY_q, Gdk.KEY_Q]:
+            self.close_window()
+            return True
+        elif event.keyval in [Gdk.KEY_Return, Gdk.KEY_KP_Enter]:
+            self.on_save()
+            return True
+        return False
+
+    def close_window(self):
+        Gtk.main_quit()
+
+def main():
+    win = ScreensaverConfigWindow()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
