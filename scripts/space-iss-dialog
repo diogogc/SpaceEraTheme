@@ -23,7 +23,7 @@ import gi
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Pango
 
 COASTLINES_FILE = os.path.expanduser("~/.config/spaceera/world-coastlines.json")
 TRACKER_BIN = os.path.expanduser("~/.local/bin/spaceera-iss-tracker")
@@ -151,7 +151,7 @@ def get_current_theme():
 class IssConsoleWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="ISS Mission Control Console")
-        self.set_default_size(960, 580)
+        self.set_default_size(1020, 620)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_wmclass("space-iss-dialog", "space-iss-dialog")
         self.set_decorated(False)
@@ -168,6 +168,8 @@ class IssConsoleWindow(Gtk.Window):
         self.selected_launch_id = None
         self.selected_launch_data = None
         self.hud_countdown_item = None
+        self.last_launches_hash = ""
+        self.card_boxes = {}
 
         self.apply_theme_css()
         self.build_ui()
@@ -629,6 +631,7 @@ class IssConsoleWindow(Gtk.Window):
         # Left Column: Map & Mission HUD Overlay
         left_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         left_col.set_hexpand(True)
+        left_col.set_vexpand(True)
 
         map_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         map_card.get_style_context().add_class("side-card")
@@ -636,7 +639,7 @@ class IssConsoleWindow(Gtk.Window):
         map_card.set_vexpand(True)
 
         self.launch_map_area = Gtk.DrawingArea()
-        self.launch_map_area.set_size_request(540, 230)
+        self.launch_map_area.set_size_request(540, 240)
         self.launch_map_area.connect("draw", self.on_draw_launch_map)
         map_card.pack_start(self.launch_map_area, True, True, 0)
         left_col.pack_start(map_card, True, True, 0)
@@ -654,8 +657,9 @@ class IssConsoleWindow(Gtk.Window):
 
         self.lbl_hud_name = Gtk.Label(label="SELECT A MISSION")
         self.lbl_hud_name.set_xalign(0.0)
+        self.lbl_hud_name.set_ellipsize(Pango.EllipsizeMode.END)
+        self.lbl_hud_name.set_max_width_chars(32)
         self.lbl_hud_name.get_style_context().add_class("reg-title")
-        self.lbl_hud_name.set_line_wrap(False)
         r1.pack_start(self.lbl_hud_name, True, True, 0)
 
         self.lbl_hud_status = Gtk.Label(label=" STANDBY ")
@@ -670,12 +674,16 @@ class IssConsoleWindow(Gtk.Window):
 
         self.lbl_hud_rocket = Gtk.Label(label="Provider • Rocket")
         self.lbl_hud_rocket.set_xalign(0.0)
+        self.lbl_hud_rocket.set_ellipsize(Pango.EllipsizeMode.END)
+        self.lbl_hud_rocket.set_max_width_chars(36)
         self.lbl_hud_rocket.get_style_context().add_class("reg-value")
         self.lbl_hud_rocket.get_style_context().add_class("reg-title")
         col_meta.pack_start(self.lbl_hud_rocket, False, False, 0)
 
         self.lbl_hud_pad = Gtk.Label(label="Pad • Location")
         self.lbl_hud_pad.set_xalign(0.0)
+        self.lbl_hud_pad.set_ellipsize(Pango.EllipsizeMode.END)
+        self.lbl_hud_pad.set_max_width_chars(40)
         self.lbl_hud_pad.get_style_context().add_class("reg-sub")
         col_meta.pack_start(self.lbl_hud_pad, False, False, 0)
         r2.pack_start(col_meta, True, True, 0)
@@ -706,7 +714,8 @@ class IssConsoleWindow(Gtk.Window):
         # Right Column: Scrolled Launch Cards List
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_size_request(380, -1)
+        scroller.set_size_request(420, -1)
+        scroller.set_vexpand(True)
 
         self.launches_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         scroller.add(self.launches_container)
@@ -726,7 +735,8 @@ class IssConsoleWindow(Gtk.Window):
             self.btn_tab_launches.get_style_context().add_class("tab-btn-active")
             self.btn_tab_iss.get_style_context().remove_class("tab-btn-active")
             self.lbl_footer.set_text("LAUNCH MANIFEST: LAUNCH LIBRARY 2 FEED // AUTO-SYNC 24H // [ESC] TO EXIT")
-            self.launch_map_area.queue_draw()
+            if hasattr(self, 'launch_map_area'):
+                self.launch_map_area.queue_draw()
 
     def update_telemetry_ui(self):
         d = self.telemetry
@@ -802,9 +812,20 @@ class IssConsoleWindow(Gtk.Window):
         else:
             self.lbl_launches_sync.set_text("SYNC: PENDING")
 
+        # Check if launches payload actually changed to prevent rebuilding GTK tree and causing flicker
+        cur_hash = json.dumps([(l.get("id"), l.get("name"), l.get("net"), l.get("is_favorite"), l.get("status")) for l in launches])
+        if cur_hash == self.last_launches_hash and count > 0:
+            # Data did not change; just update overlay & live countdowns
+            self.update_hud_overlay()
+            self.update_live_countdowns()
+            return
+
+        self.last_launches_hash = cur_hash
+
         for child in self.launches_container.get_children():
             self.launches_container.remove(child)
         self.countdown_items.clear()
+        self.card_boxes.clear()
 
         if count == 0:
             empty_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -830,13 +851,15 @@ class IssConsoleWindow(Gtk.Window):
         self.update_hud_overlay()
 
         for item in launches:
-            is_selected = (item.get("id") == self.selected_launch_id)
+            lid = item.get("id")
+            is_selected = (lid == self.selected_launch_id)
             card = Gtk.EventBox()
             card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             card_box.get_style_context().add_class("launch-card")
             if is_selected:
                 card_box.get_style_context().add_class("launch-card-selected")
             card.add(card_box)
+            self.card_boxes[lid] = card_box
 
             # Row 1: Fav Button + Mission Name + Status Badge
             r1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -845,11 +868,13 @@ class IssConsoleWindow(Gtk.Window):
             btn_fav.get_style_context().add_class("fav-btn")
             if item.get("is_favorite"):
                 btn_fav.get_style_context().add_class("fav-btn-active")
-            btn_fav.connect("clicked", lambda b, lid=item.get("id"): self.on_toggle_fav(lid))
+            btn_fav.connect("clicked", lambda b, target_id=lid: self.on_toggle_fav(target_id))
             r1.pack_start(btn_fav, False, False, 0)
 
             lbl_name = Gtk.Label(label=f"🚀 {item.get('name', 'Unknown Launch')}")
             lbl_name.set_xalign(0.0)
+            lbl_name.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl_name.set_max_width_chars(28)
             lbl_name.get_style_context().add_class("reg-title")
             r1.pack_start(lbl_name, True, True, 0)
 
@@ -868,6 +893,8 @@ class IssConsoleWindow(Gtk.Window):
             col_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             lbl_prov = Gtk.Label(label=f"{item.get('provider', '')} • {item.get('rocket', '')}")
             lbl_prov.set_xalign(0.0)
+            lbl_prov.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl_prov.set_max_width_chars(30)
             lbl_prov.get_style_context().add_class("reg-sub")
             col_info.pack_start(lbl_prov, False, False, 0)
 
@@ -876,6 +903,8 @@ class IssConsoleWindow(Gtk.Window):
                 pad_loc += f" • {item.get('location')}"
             lbl_pad = Gtk.Label(label=pad_loc)
             lbl_pad.set_xalign(0.0)
+            lbl_pad.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl_pad.set_max_width_chars(34)
             lbl_pad.get_style_context().add_class("reg-sub")
             col_info.pack_start(lbl_pad, False, False, 0)
             r2.pack_start(col_info, True, True, 0)
@@ -897,6 +926,8 @@ class IssConsoleWindow(Gtk.Window):
             net_str = item.get("net", "")
             lbl_sched = Gtk.Label(label=f"SCHEDULED: {net_str}")
             lbl_sched.set_xalign(0.0)
+            lbl_sched.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl_sched.set_max_width_chars(32)
             lbl_sched.get_style_context().add_class("reg-sub")
             r3.pack_start(lbl_sched, False, False, 0)
 
@@ -915,7 +946,8 @@ class IssConsoleWindow(Gtk.Window):
 
         self.launches_container.show_all()
         self.update_live_countdowns()
-        self.launch_map_area.queue_draw()
+        if hasattr(self, 'launch_map_area'):
+            self.launch_map_area.queue_draw()
 
     def update_hud_overlay(self):
         item = self.selected_launch_data
@@ -961,13 +993,16 @@ class IssConsoleWindow(Gtk.Window):
         self.selected_launch_data = item
         self.update_hud_overlay()
         self.update_live_countdowns()
-        self.launch_map_area.queue_draw()
 
-        # Update card highlight visually
-        for card_ev in self.launches_container.get_children():
-            card_box = card_ev.get_child() if isinstance(card_ev, Gtk.EventBox) else card_ev
-            if card_box:
-                card_box.get_style_context().remove_class("launch-card-selected")
+        # Update card highlight visually without rebuilding tree
+        for lid, box in self.card_boxes.items():
+            if lid == self.selected_launch_id:
+                box.get_style_context().add_class("launch-card-selected")
+            else:
+                box.get_style_context().remove_class("launch-card-selected")
+
+        if hasattr(self, 'launch_map_area'):
+            self.launch_map_area.queue_draw()
 
     def on_hud_toggle_fav(self):
         if self.selected_launch_id:
@@ -978,6 +1013,7 @@ class IssConsoleWindow(Gtk.Window):
             return
         subprocess.run([TRACKER_BIN, "--toggle-fav", launch_id], check=False)
         subprocess.run(["space-quindar", "beep"], check=False)
+        self.last_launches_hash = "" # force UI refresh
         self.fetch_telemetry()
 
     def update_live_countdowns(self):
