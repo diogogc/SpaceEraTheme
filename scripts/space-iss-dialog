@@ -163,6 +163,8 @@ class IssConsoleWindow(Gtk.Window):
         self.coastlines = self._load_coastlines()
         self.telemetry = {}
         self.pulse_phase = 0.0
+        self.current_tab = "iss"
+        self.countdown_items = []
 
         self.apply_theme_css()
         self.build_ui()
@@ -197,7 +199,10 @@ class IssConsoleWindow(Gtk.Window):
 
     def _on_pulse_tick(self):
         self.pulse_phase = (self.pulse_phase + 0.15) % (2.0 * math.pi)
-        self.map_area.queue_draw()
+        if self.current_tab == "iss":
+            self.map_area.queue_draw()
+        else:
+            self.update_live_countdowns()
         return True
 
     def apply_theme_css(self):
@@ -324,6 +329,52 @@ class IssConsoleWindow(Gtk.Window):
         entry:focus {{
             border: 1px solid {t['accent']};
         }}
+        .tab-bar {{
+            background-color: {t['bg_panel']};
+            border-bottom: 1px solid {t['border_dim']};
+            padding: 4px 12px;
+        }}
+        .tab-btn {{
+            background-color: transparent;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            color: {t['text_dim']};
+            font-size: 9.5px;
+            font-weight: 800;
+            padding: 5px 12px;
+        }}
+        .tab-btn:hover {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['border_dim']};
+            color: {t['text_primary']};
+        }}
+        .tab-btn-active {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['accent']};
+            color: {t['accent']};
+        }}
+        .launch-card {{
+            background-color: {t['bg_card']};
+            border: 1px solid {t['border_dim']};
+            border-radius: 3px;
+            padding: 10px 14px;
+        }}
+        .countdown-box {{
+            background-color: {t['bg_input']};
+            border: 1px solid {t['border_dim']};
+            border-radius: 3px;
+            padding: 4px 10px;
+        }}
+        .status-badge-go {{
+            background-color: #0f2e1a;
+            border: 1px solid #78ff95;
+            color: #78ff95;
+        }}
+        .status-badge-tbc {{
+            background-color: #2e220f;
+            border: 1px solid #ffaa00;
+            color: #ffaa00;
+        }}
         .status-bar {{
             font-size: 8.5px;
             color: {t['text_dim']};
@@ -369,13 +420,40 @@ class IssConsoleWindow(Gtk.Window):
 
         main_box.pack_start(header, False, False, 0)
 
+        # Tab Switcher Bar
+        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tab_bar.get_style_context().add_class("tab-bar")
+
+        self.btn_tab_iss = Gtk.Button(label="⌖ ISS ORBIT & TRACKING")
+        self.btn_tab_iss.get_style_context().add_class("tab-btn")
+        self.btn_tab_iss.get_style_context().add_class("tab-btn-active")
+        self.btn_tab_iss.connect("clicked", lambda b: self.switch_tab("iss"))
+        tab_bar.pack_start(self.btn_tab_iss, False, False, 0)
+
+        self.btn_tab_launches = Gtk.Button(label="🚀 7-DAY LAUNCHES")
+        self.btn_tab_launches.get_style_context().add_class("tab-btn")
+        self.btn_tab_launches.connect("clicked", lambda b: self.switch_tab("launches"))
+        tab_bar.pack_start(self.btn_tab_launches, False, False, 0)
+
+        main_box.pack_start(tab_bar, False, False, 0)
+
+        # Stack for View Switching
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(120)
+        main_box.pack_start(self.stack, True, True, 0)
+
         # Central Split Body: Map Area (Left) + Telemetry Instrumentation (Right)
         body_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         body_box.set_margin_start(12)
         body_box.set_margin_end(12)
         body_box.set_margin_top(8)
         body_box.set_margin_bottom(8)
-        main_box.pack_start(body_box, True, True, 0)
+        self.stack.add_named(body_box, "iss")
+
+        # 7-Day Launches View
+        launches_box = self.build_launches_ui()
+        self.stack.add_named(launches_box, "launches")
 
         # Left: Cairo Map Area
         map_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -485,6 +563,58 @@ class IssConsoleWindow(Gtk.Window):
         self.lbl_footer.get_style_context().add_class("status-bar")
         main_box.pack_end(self.lbl_footer, False, False, 0)
 
+    def build_launches_ui(self):
+        t = self.theme
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+
+        # Top Control Sub-header
+        top_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        top_bar.get_style_context().add_class("side-card")
+
+        lbl_hdr = Gtk.Label(label="🚀 UPCOMING 7-DAY SPACE LAUNCH MANIFEST")
+        lbl_hdr.set_xalign(0.0)
+        lbl_hdr.get_style_context().add_class("reg-title")
+        top_bar.pack_start(lbl_hdr, False, False, 0)
+
+        self.lbl_launches_sync = Gtk.Label(label="SYNC: PENDING")
+        self.lbl_launches_sync.get_style_context().add_class("reg-sub")
+        top_bar.pack_end(self.lbl_launches_sync, False, False, 4)
+
+        btn_ref_launches = Gtk.Button(label="[ ⟳ REFRESH LAUNCHES ]")
+        btn_ref_launches.get_style_context().add_class("action-btn")
+        btn_ref_launches.connect("clicked", self.on_refresh_launches)
+        top_bar.pack_end(btn_ref_launches, False, False, 0)
+
+        box.pack_start(top_bar, False, False, 0)
+
+        # Scrolled Launch Cards List
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+        scroller.set_hexpand(True)
+
+        self.launches_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        scroller.add(self.launches_container)
+        box.pack_start(scroller, True, True, 0)
+
+        return box
+
+    def switch_tab(self, tab_id):
+        self.current_tab = tab_id
+        self.stack.set_visible_child_name(tab_id)
+        if tab_id == "iss":
+            self.btn_tab_iss.get_style_context().add_class("tab-btn-active")
+            self.btn_tab_launches.get_style_context().remove_class("tab-btn-active")
+            self.lbl_footer.set_text("TLE: ACTIVE // PROJECTION: 19-NODE ORBIT TRACK // [ESC] TO EXIT")
+        else:
+            self.btn_tab_launches.get_style_context().add_class("tab-btn-active")
+            self.btn_tab_iss.get_style_context().remove_class("tab-btn-active")
+            self.lbl_footer.set_text("LAUNCH MANIFEST: LAUNCH LIBRARY 2 FEED // AUTO-SYNC 24H // [ESC] TO EXIT")
+
     def update_telemetry_ui(self):
         d = self.telemetry
         if not d.get("ok"):
@@ -534,6 +664,147 @@ class IssConsoleWindow(Gtk.Window):
             self.lbl_pass_status.set_text("STATUS: [ OUT OF FOOTPRINT RANGE ]")
             self.lbl_pass_status.get_style_context().remove_class("status-acquired")
             self.lbl_pass_status.get_style_context().add_class("status-nominal")
+
+        self.update_launches_ui()
+
+    def update_launches_ui(self):
+        d = self.telemetry
+        launches_info = d.get("launches_info", {})
+        launches = launches_info.get("launches", [])
+        count = len(launches)
+        self.btn_tab_launches.set_label(f"🚀 7-DAY LAUNCHES ({count})")
+
+        fat = launches_info.get("fetched_at", 0)
+        if fat > 0:
+            diff = max(0, int(time.time()) - fat)
+            if diff < 60:
+                ago = "Just now"
+            elif diff < 3600:
+                ago = f"{diff // 60}m ago"
+            elif diff < 86400:
+                ago = f"{diff // 3600}h ago"
+            else:
+                ago = f"{diff // 86400}d ago"
+            self.lbl_launches_sync.set_text(f"SYNCED: {ago.upper()}")
+        else:
+            self.lbl_launches_sync.set_text("SYNC: PENDING")
+
+        for child in self.launches_container.get_children():
+            self.launches_container.remove(child)
+        self.countdown_items.clear()
+
+        if count == 0:
+            empty_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            empty_card.get_style_context().add_class("launch-card")
+            lbl_e = Gtk.Label(label="NO SCHEDULED LAUNCHES FOUND IN THE NEXT 7 DAYS")
+            lbl_e.get_style_context().add_class("reg-sub")
+            empty_card.pack_start(lbl_e, True, True, 20)
+            self.launches_container.pack_start(empty_card, False, False, 0)
+            self.launches_container.show_all()
+            return
+
+        for item in launches:
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            card.get_style_context().add_class("launch-card")
+
+            # Row 1: Name & Status Badge
+            r1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            lbl_name = Gtk.Label(label=f"🚀 {item.get('name', 'Unknown Launch')}")
+            lbl_name.set_xalign(0.0)
+            lbl_name.get_style_context().add_class("reg-title")
+            r1.pack_start(lbl_name, True, True, 0)
+
+            status_str = item.get("status", "Unknown")
+            lbl_status = Gtk.Label(label=f" {status_str.upper()} ")
+            lbl_status.get_style_context().add_class("status-badge")
+            if "Go" in status_str:
+                lbl_status.get_style_context().add_class("status-badge-go")
+            else:
+                lbl_status.get_style_context().add_class("status-badge-tbc")
+            r1.pack_end(lbl_status, False, False, 0)
+            card.pack_start(r1, False, False, 0)
+
+            # Row 2: Provider/Pad + Countdown
+            r2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            col_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            lbl_prov = Gtk.Label(label=f"{item.get('provider', '')} • {item.get('rocket', '')}")
+            lbl_prov.set_xalign(0.0)
+            lbl_prov.get_style_context().add_class("reg-value")
+            lbl_prov.get_style_context().add_class("reg-title")
+            col_info.pack_start(lbl_prov, False, False, 0)
+
+            pad_loc = item.get('pad', '')
+            if item.get('location'):
+                pad_loc += f" • {item.get('location')}"
+            lbl_pad = Gtk.Label(label=pad_loc)
+            lbl_pad.set_xalign(0.0)
+            lbl_pad.get_style_context().add_class("reg-sub")
+            col_info.pack_start(lbl_pad, False, False, 0)
+            r2.pack_start(col_info, True, True, 0)
+
+            # Countdown Box
+            cd_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            cd_box.get_style_context().add_class("countdown-box")
+            lbl_cd = Gtk.Label(label="⏱ T- --:--:--")
+            lbl_cd.get_style_context().add_class("reg-value")
+            cd_box.pack_start(lbl_cd, False, False, 0)
+            r2.pack_end(cd_box, False, False, 0)
+
+            net_ts = item.get("net_ts", 0)
+            self.countdown_items.append((lbl_cd, net_ts))
+            card.pack_start(r2, False, False, 0)
+
+            # Row 3: Scheduled Date + Orbit Tag
+            r3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            net_str = item.get("net", "")
+            lbl_sched = Gtk.Label(label=f"SCHEDULED: {net_str}")
+            lbl_sched.set_xalign(0.0)
+            lbl_sched.get_style_context().add_class("reg-sub")
+            r3.pack_start(lbl_sched, False, False, 0)
+
+            orbit_str = item.get("orbit", "")
+            if orbit_str:
+                lbl_orb = Gtk.Label(label=f"ORBIT: {orbit_str}")
+                lbl_orb.get_style_context().add_class("reg-sub")
+                r3.pack_end(lbl_orb, False, False, 0)
+
+            card.pack_start(r3, False, False, 0)
+            self.launches_container.pack_start(card, False, False, 0)
+
+        self.launches_container.show_all()
+        self.update_live_countdowns()
+
+    def update_live_countdowns(self):
+        now = int(time.time())
+        for lbl, net_ts in self.countdown_items:
+            if not net_ts or net_ts <= 0:
+                lbl.set_text("T- PENDING")
+                continue
+            diff = net_ts - now
+            if diff < -7200:
+                lbl.set_text("LAUNCHED")
+            elif diff < 0:
+                abs_d = abs(diff)
+                m = (abs_d % 3600) // 60
+                s = abs_d % 60
+                lbl.set_text(f"T+ {m:02d}m {s:02d}s")
+            else:
+                days = diff // 86400
+                hours = (diff % 86400) // 3600
+                mins = (diff % 3600) // 60
+                secs = diff % 60
+                if days > 0:
+                    lbl.set_text(f"⏱ T- {days}d {hours:02d}h {mins:02d}m {secs:02d}s")
+                else:
+                    lbl.set_text(f"⏱ T- {hours:02d}h {mins:02d}m {secs:02d}s")
+
+    def on_refresh_launches(self, widget):
+        self.lbl_footer.set_text("FETCHING UPCOMING LAUNCHES FROM LAUNCH LIBRARY 2...")
+        subprocess.run([TRACKER_BIN, "--fetch-launches"], check=False)
+        subprocess.run(["space-quindar", "beep"], check=False)
+        self.fetch_telemetry()
+
+
 
     def on_draw_map(self, widget, cr):
         t = self.theme

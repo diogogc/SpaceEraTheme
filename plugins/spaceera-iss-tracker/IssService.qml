@@ -38,11 +38,25 @@ Item {
   property bool updatingTle: false
   property string tleStatus: ""
 
+  property var upcomingLaunches: []
+  property int launchesFetchedAt: 0
+  property bool updatingLaunches: false
+  property string launchesStatus: ""
+  readonly property int launchesCount: upcomingLaunches ? upcomingLaunches.length : 0
+
   function updateTle() {
     if (statusProc.running) return
     tleStatus = "UPDATING TLE..."
     updatingTle = true
     statusProc.command = [scriptPath, "--fetch-tle"]
+    statusProc.running = true
+  }
+
+  function updateLaunches() {
+    if (statusProc.running) return
+    launchesStatus = "UPDATING..."
+    updatingLaunches = true
+    statusProc.command = [scriptPath, "--fetch-launches"]
     statusProc.running = true
   }
 
@@ -123,6 +137,52 @@ Item {
     distanceToUserKm = earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   }
 
+  function formatCountdown(targetSeconds, currentSeconds) {
+    var diff = Number(targetSeconds) - Number(currentSeconds)
+    if (isNaN(diff)) return "T- --:--:--"
+    if (diff < -7200) return "LAUNCHED"
+    if (diff < 0) return "T+ " + formatDurationSeconds(Math.abs(diff))
+    return "T- " + formatDurationFull(diff)
+  }
+
+  function formatDurationFull(seconds) {
+    var total = Math.max(0, Math.round(Number(seconds) || 0))
+    var days = Math.floor(total / 86400)
+    var hours = Math.floor((total % 86400) / 3600)
+    var minutes = Math.floor((total % 3600) / 60)
+    var secs = total % 60
+    if (days > 0) return days + "d " + twoDigits(hours) + "h " + twoDigits(minutes) + "m " + twoDigits(secs) + "s"
+    return twoDigits(hours) + "h " + twoDigits(minutes) + "m " + twoDigits(secs) + "s"
+  }
+
+  function formatDurationSeconds(seconds) {
+    var total = Math.max(0, Math.round(Number(seconds) || 0))
+    var minutes = Math.floor((total % 3600) / 60)
+    var secs = total % 60
+    return twoDigits(minutes) + "m " + twoDigits(secs) + "s"
+  }
+
+  function formatLaunchDate(isoStr) {
+    if (!isoStr) return "--"
+    try {
+      var d = new Date(isoStr)
+      var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+      return months[d.getUTCMonth()] + " " + twoDigits(d.getUTCDate()) + " " + twoDigits(d.getUTCHours()) + ":" + twoDigits(d.getUTCMinutes()) + " UTC"
+    } catch(e) {
+      return isoStr
+    }
+  }
+
+  function formatTimeAgo(timestamp) {
+    var stamp = Number(timestamp) || 0
+    if (stamp <= 0) return "Never"
+    var diff = Math.max(0, root.nowSeconds - stamp)
+    if (diff < 60) return "Just now"
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago"
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago"
+    return Math.floor(diff / 86400) + "d ago"
+  }
+
   function parseStatus(raw) {
     try {
       var data = JSON.parse(String(raw || "{}"))
@@ -137,6 +197,15 @@ Item {
       root.orbit = Array.isArray(data.orbit) ? data.orbit : []
       root.nextPass = data.next_pass || ({available: false})
       root.tleInfo = data.tle_info || ({available: false, age_days: 0, stale: false, warning: ""})
+      
+      if (data.launches_info) {
+        root.upcomingLaunches = Array.isArray(data.launches_info.launches) ? data.launches_info.launches : []
+        root.launchesFetchedAt = Number(data.launches_info.fetched_at) || 0
+      } else if (Array.isArray(data.launches)) {
+        root.upcomingLaunches = data.launches
+        root.launchesFetchedAt = Number(data.fetched_at) || Math.floor(Date.now() / 1000)
+      }
+
       var location = data.user_location || {}
       root.userLocationConfigured = location.configured === true
       root.userCity = String(location.city || "")
@@ -151,6 +220,10 @@ Item {
         root.tleStatus = (root.tleInfo && root.tleInfo.stale) ? "TLE STALE" : "TLE UPDATED"
         root.updatingTle = false
         root.refresh()
+      }
+      if (root.updatingLaunches) {
+        root.launchesStatus = "UPDATED"
+        root.updatingLaunches = false
       }
     } catch (e) {
       root.ok = false
