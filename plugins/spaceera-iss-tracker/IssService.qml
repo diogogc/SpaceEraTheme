@@ -39,6 +39,7 @@ Item {
   property string tleStatus: ""
 
   property var upcomingLaunches: []
+  property var favoriteLaunchIds: []
   property int launchesFetchedAt: 0
   property bool updatingLaunches: false
   property string launchesStatus: ""
@@ -57,6 +58,12 @@ Item {
     launchesStatus = "UPDATING..."
     updatingLaunches = true
     statusProc.command = [scriptPath, "--fetch-launches"]
+    statusProc.running = true
+  }
+
+  function toggleFavoriteLaunch(launchId) {
+    if (!launchId || statusProc.running) return
+    statusProc.command = [scriptPath, "--toggle-fav", String(launchId)]
     statusProc.running = true
   }
 
@@ -201,9 +208,11 @@ Item {
       if (data.launches_info) {
         root.upcomingLaunches = Array.isArray(data.launches_info.launches) ? data.launches_info.launches : []
         root.launchesFetchedAt = Number(data.launches_info.fetched_at) || 0
+        root.favoriteLaunchIds = Array.isArray(data.launches_info.favorites) ? data.launches_info.favorites : []
       } else if (Array.isArray(data.launches)) {
         root.upcomingLaunches = data.launches
         root.launchesFetchedAt = Number(data.fetched_at) || Math.floor(Date.now() / 1000)
+        root.favoriteLaunchIds = Array.isArray(data.favorites) ? data.favorites : []
       }
 
       var location = data.user_location || {}

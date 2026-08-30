@@ -14,6 +14,8 @@ Panel {
   property var trackerService: null
   property bool signalFlash: false
   property int currentTab: 0
+  property var selectedLaunch: null
+  readonly property var activeLaunch: selectedLaunch || (service.upcomingLaunches && service.upcomingLaunches.length > 0 ? service.upcomingLaunches[0] : null)
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -536,6 +538,197 @@ Panel {
               }
             }
 
+            // ==========================================
+            // INTERACTIVE LAUNCH SITE MAP & MISSION OVERLAY
+            // ==========================================
+            Rectangle {
+              width: parent.width
+              implicitHeight: launchMapCol.implicitHeight + Style.space(12)
+              color: "#080c10"
+              border.color: "#1b3326"
+              border.width: 1
+              radius: Style.space(4)
+              visible: root.activeLaunch !== null
+
+              Column {
+                id: launchMapCol
+                anchors.fill: parent
+                anchors.margins: Style.space(6)
+                spacing: Style.space(6)
+
+                // Map Canvas
+                ConsoleWorldMap {
+                  width: parent.width
+                  implicitHeight: Style.space(185)
+                  showIss: false
+                  showLaunchMarker: true
+                  launchLatitude: root.activeLaunch && root.activeLaunch.pad_lat !== null ? Number(root.activeLaunch.pad_lat) : 0
+                  launchLongitude: root.activeLaunch && root.activeLaunch.pad_lon !== null ? Number(root.activeLaunch.pad_lon) : 0
+                  launchName: root.activeLaunch ? root.activeLaunch.name : ""
+                  launchPad: root.activeLaunch ? root.activeLaunch.pad : ""
+                  foreground: root.foreground
+                  dim: root.dim
+                }
+
+                // HUD Mission Overlay Card
+                Rectangle {
+                  width: parent.width
+                  implicitHeight: hudCol.implicitHeight + Style.space(12)
+                  color: "#05080c"
+                  border.color: "#162330"
+                  border.width: 1
+                  radius: Style.space(3)
+
+                  ColumnLayout {
+                    id: hudCol
+                    anchors.fill: parent
+                    anchors.margins: Style.space(8)
+                    spacing: Style.space(4)
+
+                    // Line 1: Star Fav Button + Mission Name + Status
+                    RowLayout {
+                      width: parent.width
+                      spacing: Style.space(8)
+
+                      Button {
+                        text: (root.activeLaunch && root.activeLaunch.is_favorite) ? "★ FAVORITED" : "☆ FAVORITE"
+                        foreground: (root.activeLaunch && root.activeLaunch.is_favorite) ? "#ffaa00" : "#78ff95"
+                        accent: Color.accent
+                        fontFamily: root.fontFamily
+                        fontSize: Style.font.caption - 1
+                        horizontalPadding: Style.space(8)
+                        verticalPadding: Style.space(2)
+                        onClicked: if (root.activeLaunch) service.toggleFavoriteLaunch(root.activeLaunch.id)
+                      }
+
+                      Text {
+                        text: root.activeLaunch ? ("🚀 " + root.activeLaunch.name) : ""
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.body
+                        font.bold: true
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                      }
+
+                      Rectangle {
+                        implicitWidth: hudStatusText.implicitWidth + Style.space(10)
+                        implicitHeight: Style.space(20)
+                        radius: Style.space(3)
+                        color: root.activeLaunch && root.activeLaunch.status === "Go for Launch"
+                          ? "#0f2e1a"
+                          : (root.activeLaunch && root.activeLaunch.status === "To Be Confirmed" ? "#2e220f" : "#1a2530")
+                        border.color: root.activeLaunch && root.activeLaunch.status === "Go for Launch"
+                          ? "#78ff95"
+                          : (root.activeLaunch && root.activeLaunch.status === "To Be Confirmed" ? "#ffaa00" : "#607d8b")
+                        border.width: 1
+
+                        Text {
+                          id: hudStatusText
+                          anchors.centerIn: parent
+                          text: root.activeLaunch ? String(root.activeLaunch.status || "UNKNOWN").toUpperCase() : ""
+                          color: root.activeLaunch && root.activeLaunch.status === "Go for Launch"
+                            ? "#78ff95"
+                            : (root.activeLaunch && root.activeLaunch.status === "To Be Confirmed" ? "#ffaa00" : "#90a4ae")
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption - 2
+                          font.bold: true
+                        }
+                      }
+                    }
+
+                    // Line 2: Provider/Pad & Live Countdown
+                    RowLayout {
+                      width: parent.width
+                      spacing: Style.space(8)
+
+                      Column {
+                        Layout.fillWidth: true
+                        spacing: Style.space(2)
+
+                        Text {
+                          text: root.activeLaunch ? (root.activeLaunch.provider + " • " + root.activeLaunch.rocket) : ""
+                          color: "#78ff95"
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                          elide: Text.ElideRight
+                          width: parent.width
+                        }
+
+                        Text {
+                          text: root.activeLaunch ? ((root.activeLaunch.pad || "Pad") + (root.activeLaunch.location ? (" • " + root.activeLaunch.location) : "")) : ""
+                          color: root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption - 1
+                          elide: Text.ElideRight
+                          width: parent.width
+                        }
+                      }
+
+                      // Countdown Box
+                      Rectangle {
+                        implicitWidth: Style.space(180)
+                        implicitHeight: Style.space(32)
+                        radius: Style.space(3)
+                        color: "#0a1016"
+                        border.color: "#78ff95"
+                        border.width: 1
+
+                        RowLayout {
+                          anchors.centerIn: parent
+                          spacing: Style.space(4)
+
+                          Text {
+                            text: "⏱"
+                            color: root.activeLaunch && root.activeLaunch.net_ts && (root.activeLaunch.net_ts - service.nowSeconds) <= 86400 ? "#ffaa00" : "#78ff95"
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                          }
+
+                          Text {
+                            text: root.activeLaunch && root.activeLaunch.net_ts > 0
+                              ? service.formatCountdown(root.activeLaunch.net_ts, service.nowSeconds)
+                              : "T- PENDING"
+                            color: root.activeLaunch && root.activeLaunch.net_ts && (root.activeLaunch.net_ts - service.nowSeconds) <= 86400 ? "#ffaa00" : "#78ff95"
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.body
+                            font.bold: true
+                          }
+                        }
+                      }
+                    }
+
+                    // Line 3: Pad Coordinates & Scheduled UTC
+                    RowLayout {
+                      width: parent.width
+                      spacing: Style.space(8)
+
+                      Text {
+                        text: root.activeLaunch && root.activeLaunch.pad_lat !== null && root.activeLaunch.pad_lon !== null
+                          ? ("PAD COORDS: " + service.formatCoord(root.activeLaunch.pad_lat, "N", "S") + "  " + service.formatCoord(root.activeLaunch.pad_lon, "E", "W"))
+                          : "PAD COORDS: UNLISTED"
+                        color: "#ffaa00"
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption - 1
+                        font.bold: true
+                      }
+
+                      Item { Layout.fillWidth: true }
+
+                      Text {
+                        text: root.activeLaunch ? ("SCHEDULED: " + service.formatLaunchDate(root.activeLaunch.net)) : ""
+                        color: "#c4d1d6"
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption - 1
+                        font.bold: true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
             // Launch Cards
             Repeater {
               model: service.upcomingLaunches
@@ -546,25 +739,46 @@ Panel {
 
                 width: parent.width
                 implicitHeight: cardCol.implicitHeight + Style.space(16)
-                color: "#080c10"
-                border.color: modelData.status === "Go for Launch" ? "#1b3326" : (modelData.status === "To Be Confirmed" ? "#332616" : "#162330")
-                border.width: 1
+                color: (root.activeLaunch && root.activeLaunch.id === modelData.id) ? "#0c151c" : "#080c10"
+                border.color: (root.activeLaunch && root.activeLaunch.id === modelData.id)
+                  ? "#78ff95"
+                  : (modelData.status === "Go for Launch" ? "#1b3326" : (modelData.status === "To Be Confirmed" ? "#332616" : "#162330"))
+                border.width: (root.activeLaunch && root.activeLaunch.id === modelData.id) ? 1.5 : 1
                 radius: Style.space(4)
+
+                MouseArea {
+                  anchors.fill: parent
+                  z: 0
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.selectedLaunch = modelData
+                }
 
                 ColumnLayout {
                   id: cardCol
                   anchors.fill: parent
                   anchors.margins: Style.space(10)
                   spacing: Style.space(6)
+                  z: 1
 
-                  // Top Line: Mission Name & Status Badge
+                  // Top Line: Star Fav Button + Mission Name & Status Badge
                   RowLayout {
                     width: parent.width
                     spacing: Style.space(8)
 
+                    Button {
+                      text: modelData.is_favorite ? "★" : "☆"
+                      foreground: modelData.is_favorite ? "#ffaa00" : root.dim
+                      accent: Color.accent
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.body
+                      horizontalPadding: Style.space(6)
+                      verticalPadding: Style.space(1)
+                      onClicked: service.toggleFavoriteLaunch(modelData.id)
+                    }
+
                     Text {
                       text: "🚀 " + (modelData.name || "Unknown Mission")
-                      color: root.foreground
+                      color: (root.activeLaunch && root.activeLaunch.id === modelData.id) ? "#78ff95" : root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.body
                       font.bold: true

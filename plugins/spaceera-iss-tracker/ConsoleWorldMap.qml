@@ -13,6 +13,12 @@ BorderSurface {
   property real userLatitude: 0
   property real userLongitude: 0
   property real visibilityRadiusKm: 0
+  property bool showIss: true
+  property bool showLaunchMarker: false
+  property real launchLatitude: 0
+  property real launchLongitude: 0
+  property string launchName: ""
+  property string launchPad: ""
   property color foreground: Color.foreground
   property color dim: Qt.darker(foreground, 1.55)
   readonly property real earthRadiusKm: 6371
@@ -141,6 +147,38 @@ BorderSurface {
     ctx.fill()
   }
 
+  function drawLaunchSite(ctx, w, h) {
+    if (!showLaunchMarker || (launchLatitude === 0 && launchLongitude === 0)) return
+
+    var lx = xForLon(launchLongitude, w)
+    var ly = yForLat(launchLatitude, h)
+
+    ctx.strokeStyle = "#ffb000"
+    ctx.fillStyle = "#ffb000"
+    ctx.shadowColor = "#ffb000"
+    ctx.shadowBlur = 6
+    ctx.lineWidth = 1.4
+
+    ctx.beginPath()
+    ctx.arc(lx, ly, 8, 0, Math.PI * 2)
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.moveTo(lx - 14, ly)
+    ctx.lineTo(lx - 4, ly)
+    ctx.moveTo(lx + 4, ly)
+    ctx.lineTo(lx + 14, ly)
+    ctx.moveTo(lx, ly - 14)
+    ctx.lineTo(lx, ly - 4)
+    ctx.moveTo(lx, ly + 4)
+    ctx.lineTo(lx, ly + 14)
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.arc(lx, ly, 3.5, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
   padding: Style.space(10)
   radius: Style.cornerRadius
   color: "#06090c"
@@ -180,44 +218,50 @@ BorderSurface {
       ctx.lineWidth = 1.05
       drawWorld(ctx, w, h)
 
-      ctx.setLineDash([4, 5])
-      ctx.shadowColor = "#6099ba"
-      ctx.strokeStyle = "rgba(96, 153, 186, 0.55)"
-      ctx.lineWidth = 1.15
-      drawVisibilityCircle(ctx, w, h)
-      ctx.setLineDash([])
+      if (root.showIss) {
+        ctx.setLineDash([4, 5])
+        ctx.shadowColor = "#6099ba"
+        ctx.strokeStyle = "rgba(96, 153, 186, 0.55)"
+        ctx.lineWidth = 1.15
+        drawVisibilityCircle(ctx, w, h)
+        ctx.setLineDash([])
 
-      ctx.setLineDash([10, 6])
-      ctx.shadowColor = "#c4d1d6"
-      ctx.strokeStyle = "rgba(196, 209, 214, 0.95)"
-      ctx.lineWidth = 1.55
-      drawOrbitPath(ctx, orbit, w, h)
-      ctx.setLineDash([])
-      ctx.shadowBlur = 0
+        ctx.setLineDash([10, 6])
+        ctx.shadowColor = "#c4d1d6"
+        ctx.strokeStyle = "rgba(196, 209, 214, 0.95)"
+        ctx.lineWidth = 1.55
+        drawOrbitPath(ctx, orbit, w, h)
+        ctx.setLineDash([])
+        ctx.shadowBlur = 0
 
-      var mx = xForLon(longitude, w)
-      var my = yForLat(latitude, h)
-      ctx.strokeStyle = "#fc3d21"
-      ctx.fillStyle = "#fc3d21"
-      ctx.shadowColor = "#fc3d21"
-      ctx.shadowBlur = 3
-      ctx.lineWidth = 1.4
-      ctx.beginPath()
-      ctx.moveTo(mx - 14, my)
-      ctx.lineTo(mx - 5, my)
-      ctx.moveTo(mx + 5, my)
-      ctx.lineTo(mx + 14, my)
-      ctx.moveTo(mx, my - 14)
-      ctx.lineTo(mx, my - 5)
-      ctx.moveTo(mx, my + 5)
-      ctx.lineTo(mx, my + 14)
-      ctx.stroke()
+        var mx = xForLon(longitude, w)
+        var my = yForLat(latitude, h)
+        ctx.strokeStyle = "#fc3d21"
+        ctx.fillStyle = "#fc3d21"
+        ctx.shadowColor = "#fc3d21"
+        ctx.shadowBlur = 3
+        ctx.lineWidth = 1.4
+        ctx.beginPath()
+        ctx.moveTo(mx - 14, my)
+        ctx.lineTo(mx - 5, my)
+        ctx.moveTo(mx + 5, my)
+        ctx.lineTo(mx + 14, my)
+        ctx.moveTo(mx, my - 14)
+        ctx.lineTo(mx, my - 5)
+        ctx.moveTo(mx, my + 5)
+        ctx.lineTo(mx, my + 14)
+        ctx.stroke()
 
-      ctx.beginPath()
-      ctx.arc(mx, my, 4, 0, Math.PI * 2)
-      ctx.fill()
+        ctx.beginPath()
+        ctx.arc(mx, my, 4, 0, Math.PI * 2)
+        ctx.fill()
 
-      drawUserLocation(ctx, w, h)
+        drawUserLocation(ctx, w, h)
+      }
+
+      if (root.showLaunchMarker) {
+        drawLaunchSite(ctx, w, h)
+      }
     }
 
     Connections {
@@ -230,6 +274,10 @@ BorderSurface {
       function onUserLongitudeChanged() { mapCanvas.requestPaint() }
       function onVisibilityRadiusKmChanged() { mapCanvas.requestPaint() }
       function onForegroundChanged() { mapCanvas.requestPaint() }
+      function onLaunchLatitudeChanged() { mapCanvas.requestPaint() }
+      function onLaunchLongitudeChanged() { mapCanvas.requestPaint() }
+      function onShowLaunchMarkerChanged() { mapCanvas.requestPaint() }
+      function onShowIssChanged() { mapCanvas.requestPaint() }
     }
 
     Component.onCompleted: requestPaint()

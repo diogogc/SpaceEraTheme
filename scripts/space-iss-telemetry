@@ -113,6 +113,105 @@ def check_and_dispatch_alerts(data):
     except Exception:
         pass
 
+def check_and_dispatch_launch_alerts(data):
+    launches_info = data.get("launches_info", {})
+    launches = launches_info.get("launches", [])
+    if not launches:
+        return
+
+    now = int(time.time())
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/user-{os.getuid()}"
+    alerts_file = os.path.join(runtime_dir, "omarchy-spaceera-iss-tracker", "launch_alerts.json")
+    os.makedirs(os.path.dirname(alerts_file), exist_ok=True)
+
+    state = {}
+    if os.path.isfile(alerts_file):
+        try:
+            with open(alerts_file, "r") as f:
+                state = json.load(f)
+        except Exception:
+            state = {}
+
+    quindar_bin = os.path.expanduser("~/.local/bin/space-quindar")
+
+    for item in launches:
+        if not item.get("is_favorite"):
+            continue
+        lid = item.get("id")
+        if not lid:
+            continue
+        net_ts = item.get("net_ts", 0)
+        if not net_ts or net_ts <= 0:
+            continue
+
+        cd = net_ts - now
+        l_state = state.get(lid, {})
+        name = item.get("name", "Unknown Launch")
+        prov = item.get("provider", "Unknown Provider")
+        rocket = item.get("rocket", "Rocket")
+        pad = item.get("pad", "Launch Pad")
+        loc = item.get("location", "")
+        pad_str = f"{pad} • {loc}" if loc else pad
+
+        # Alert Phase 1: T-1 Hour (cd <= 3600 and cd > 600)
+        if 0 < cd <= 3600 and not l_state.get("1h"):
+            title = f"🚀 LAUNCH ALERT: {name} (T-1 HOUR)"
+            msg = f"{prov} • {rocket}\nPad: {pad_str}\nLiftoff scheduled in ~{max(1, cd//60)} minutes."
+            subprocess.run([
+                "notify-send",
+                "-a", "Space Launch Control",
+                "-i", "preferences-system-network",
+                "-u", "normal",
+                "-t", "10000",
+                "-h", f"string:x-canonical-private-synchronous:launch-{lid}-1h",
+                title, msg
+            ], check=False)
+            if os.path.isfile(quindar_bin):
+                subprocess.run([quindar_bin, "intro"], check=False)
+            l_state["1h"] = True
+
+        # Alert Phase 2: T-10 Minutes (cd <= 600 and cd > 60)
+        if 0 < cd <= 600 and not l_state.get("10m"):
+            title = f"⚠️ LAUNCH WARNING: {name} (T-10 MINUTES)"
+            msg = f"{prov} • {rocket}\nPad: {pad_str}\nLiftoff in {max(1, cd//60)}m {cd%60:02d}s! Terminal countdown active."
+            subprocess.run([
+                "notify-send",
+                "-a", "Space Launch Control",
+                "-i", "preferences-system-network",
+                "-u", "critical",
+                "-t", "12000",
+                "-h", f"string:x-canonical-private-synchronous:launch-{lid}-10m",
+                title, msg
+            ], check=False)
+            if os.path.isfile(quindar_bin):
+                subprocess.run([quindar_bin, "intro"], check=False)
+            l_state["10m"] = True
+
+        # Alert Phase 3: T-1 Minute (cd <= 60 and cd > -30)
+        if -30 <= cd <= 60 and not l_state.get("1m"):
+            title = f"🚨 LAUNCH IMMINENT: {name} (T-1 MINUTE)"
+            msg = f"{prov} • {rocket}\nPad: {pad_str}\nFinal seconds! Ignition and liftoff imminent."
+            subprocess.run([
+                "notify-send",
+                "-a", "Space Launch Control",
+                "-i", "preferences-system-network",
+                "-u", "critical",
+                "-t", "15000",
+                "-h", f"string:x-canonical-private-synchronous:launch-{lid}-1m",
+                title, msg
+            ], check=False)
+            if os.path.isfile(quindar_bin):
+                subprocess.run([quindar_bin, "acquired"], check=False)
+            l_state["1m"] = True
+
+        state[lid] = l_state
+
+    try:
+        with open(alerts_file, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass
+
 def format_coords(lat, lon):
     lat_dir = "N" if lat >= 0 else "S"
     lon_dir = "E" if lon >= 0 else "W"
@@ -147,6 +246,8 @@ def main():
 
     # Check and dispatch pass approach & acquisition alerts
     check_and_dispatch_alerts(data)
+    # Check and dispatch favorite launch countdown alerts (T-1h, T-10m, T-1m)
+    check_and_dispatch_launch_alerts(data)
 
     lat = float(data.get("latitude", 0))
     lon = float(data.get("longitude", 0))

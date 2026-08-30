@@ -165,6 +165,9 @@ class IssConsoleWindow(Gtk.Window):
         self.pulse_phase = 0.0
         self.current_tab = "iss"
         self.countdown_items = []
+        self.selected_launch_id = None
+        self.selected_launch_data = None
+        self.hud_countdown_item = None
 
         self.apply_theme_css()
         self.build_ui()
@@ -203,6 +206,8 @@ class IssConsoleWindow(Gtk.Window):
             self.map_area.queue_draw()
         else:
             self.update_live_countdowns()
+            if hasattr(self, 'launch_map_area'):
+                self.launch_map_area.queue_draw()
         return True
 
     def apply_theme_css(self):
@@ -357,7 +362,34 @@ class IssConsoleWindow(Gtk.Window):
             background-color: {t['bg_card']};
             border: 1px solid {t['border_dim']};
             border-radius: 3px;
-            padding: 10px 14px;
+            padding: 8px 12px;
+        }}
+        .launch-card:hover {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['border_color']};
+        }}
+        .launch-card-selected {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['accent']};
+        }}
+        .fav-btn {{
+            background-color: transparent;
+            border: 1px solid {t['border_dim']};
+            color: {t['text_dim']};
+            font-size: 11px;
+            font-weight: 900;
+            padding: 2px 6px;
+            border-radius: 2px;
+        }}
+        .fav-btn:hover {{
+            background-color: {t['bg_selected']};
+            border: 1px solid {t['accent']};
+            color: {t['accent']};
+        }}
+        .fav-btn-active {{
+            background-color: #2e220f;
+            border: 1px solid #ffaa00;
+            color: #ffaa00;
         }}
         .countdown-box {{
             background-color: {t['bg_input']};
@@ -565,10 +597,10 @@ class IssConsoleWindow(Gtk.Window):
 
     def build_launches_ui(self):
         t = self.theme
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_start(12)
         box.set_margin_end(12)
-        box.set_margin_top(8)
+        box.set_margin_top(6)
         box.set_margin_bottom(8)
 
         # Top Control Sub-header
@@ -591,16 +623,96 @@ class IssConsoleWindow(Gtk.Window):
 
         box.pack_start(top_bar, False, False, 0)
 
-        # Scrolled Launch Cards List
+        # Split Body: Left (Map + Mission Overlay) + Right (Scrolled Mission List)
+        split_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+
+        # Left Column: Map & Mission HUD Overlay
+        left_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        left_col.set_hexpand(True)
+
+        map_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        map_card.get_style_context().add_class("side-card")
+        map_card.set_hexpand(True)
+        map_card.set_vexpand(True)
+
+        self.launch_map_area = Gtk.DrawingArea()
+        self.launch_map_area.set_size_request(540, 230)
+        self.launch_map_area.connect("draw", self.on_draw_launch_map)
+        map_card.pack_start(self.launch_map_area, True, True, 0)
+        left_col.pack_start(map_card, True, True, 0)
+
+        # Mission HUD Overlay Card
+        self.hud_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.hud_card.get_style_context().add_class("side-card")
+
+        # HUD Row 1: Fav Button + Mission Name + Status Badge
+        r1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.hud_btn_fav = Gtk.Button(label="☆ FAVORITE")
+        self.hud_btn_fav.get_style_context().add_class("fav-btn")
+        self.hud_btn_fav.connect("clicked", lambda b: self.on_hud_toggle_fav())
+        r1.pack_start(self.hud_btn_fav, False, False, 0)
+
+        self.lbl_hud_name = Gtk.Label(label="SELECT A MISSION")
+        self.lbl_hud_name.set_xalign(0.0)
+        self.lbl_hud_name.get_style_context().add_class("reg-title")
+        self.lbl_hud_name.set_line_wrap(False)
+        r1.pack_start(self.lbl_hud_name, True, True, 0)
+
+        self.lbl_hud_status = Gtk.Label(label=" STANDBY ")
+        self.lbl_hud_status.get_style_context().add_class("status-badge")
+        self.lbl_hud_status.get_style_context().add_class("status-badge-go")
+        r1.pack_end(self.lbl_hud_status, False, False, 0)
+        self.hud_card.pack_start(r1, False, False, 0)
+
+        # HUD Row 2: Provider/Pad & Live Countdown
+        r2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        col_meta = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+
+        self.lbl_hud_rocket = Gtk.Label(label="Provider • Rocket")
+        self.lbl_hud_rocket.set_xalign(0.0)
+        self.lbl_hud_rocket.get_style_context().add_class("reg-value")
+        self.lbl_hud_rocket.get_style_context().add_class("reg-title")
+        col_meta.pack_start(self.lbl_hud_rocket, False, False, 0)
+
+        self.lbl_hud_pad = Gtk.Label(label="Pad • Location")
+        self.lbl_hud_pad.set_xalign(0.0)
+        self.lbl_hud_pad.get_style_context().add_class("reg-sub")
+        col_meta.pack_start(self.lbl_hud_pad, False, False, 0)
+        r2.pack_start(col_meta, True, True, 0)
+
+        cd_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        cd_box.get_style_context().add_class("countdown-box")
+        self.lbl_hud_cd = Gtk.Label(label="⏱ T- --:--:--")
+        self.lbl_hud_cd.get_style_context().add_class("reg-value")
+        cd_box.pack_start(self.lbl_hud_cd, False, False, 0)
+        r2.pack_end(cd_box, False, False, 0)
+        self.hud_card.pack_start(r2, False, False, 0)
+
+        # HUD Row 3: Pad Coordinates & Scheduled UTC
+        r3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.lbl_hud_coords = Gtk.Label(label="PAD COORDS: --")
+        self.lbl_hud_coords.set_xalign(0.0)
+        self.lbl_hud_coords.get_style_context().add_class("reg-sub")
+        r3.pack_start(self.lbl_hud_coords, False, False, 0)
+
+        self.lbl_hud_net = Gtk.Label(label="SCHEDULED: --")
+        self.lbl_hud_net.get_style_context().add_class("reg-sub")
+        r3.pack_end(self.lbl_hud_net, False, False, 0)
+        self.hud_card.pack_start(r3, False, False, 0)
+
+        left_col.pack_start(self.hud_card, False, False, 0)
+        split_box.pack_start(left_col, True, True, 0)
+
+        # Right Column: Scrolled Launch Cards List
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_vexpand(True)
-        scroller.set_hexpand(True)
+        scroller.set_size_request(380, -1)
 
         self.launches_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         scroller.add(self.launches_container)
-        box.pack_start(scroller, True, True, 0)
+        split_box.pack_start(scroller, False, False, 0)
 
+        box.pack_start(split_box, True, True, 0)
         return box
 
     def switch_tab(self, tab_id):
@@ -614,6 +726,7 @@ class IssConsoleWindow(Gtk.Window):
             self.btn_tab_launches.get_style_context().add_class("tab-btn-active")
             self.btn_tab_iss.get_style_context().remove_class("tab-btn-active")
             self.lbl_footer.set_text("LAUNCH MANIFEST: LAUNCH LIBRARY 2 FEED // AUTO-SYNC 24H // [ESC] TO EXIT")
+            self.launch_map_area.queue_draw()
 
     def update_telemetry_ui(self):
         d = self.telemetry
@@ -703,12 +816,38 @@ class IssConsoleWindow(Gtk.Window):
             self.launches_container.show_all()
             return
 
-        for item in launches:
-            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            card.get_style_context().add_class("launch-card")
+        # Select first launch by default if none selected or selected disappeared
+        selected_found = False
+        for l in launches:
+            if l.get("id") == self.selected_launch_id:
+                self.selected_launch_data = l
+                selected_found = True
+                break
+        if not selected_found and launches:
+            self.selected_launch_id = launches[0].get("id")
+            self.selected_launch_data = launches[0]
 
-            # Row 1: Name & Status Badge
-            r1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.update_hud_overlay()
+
+        for item in launches:
+            is_selected = (item.get("id") == self.selected_launch_id)
+            card = Gtk.EventBox()
+            card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            card_box.get_style_context().add_class("launch-card")
+            if is_selected:
+                card_box.get_style_context().add_class("launch-card-selected")
+            card.add(card_box)
+
+            # Row 1: Fav Button + Mission Name + Status Badge
+            r1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            
+            btn_fav = Gtk.Button(label="★" if item.get("is_favorite") else "☆")
+            btn_fav.get_style_context().add_class("fav-btn")
+            if item.get("is_favorite"):
+                btn_fav.get_style_context().add_class("fav-btn-active")
+            btn_fav.connect("clicked", lambda b, lid=item.get("id"): self.on_toggle_fav(lid))
+            r1.pack_start(btn_fav, False, False, 0)
+
             lbl_name = Gtk.Label(label=f"🚀 {item.get('name', 'Unknown Launch')}")
             lbl_name.set_xalign(0.0)
             lbl_name.get_style_context().add_class("reg-title")
@@ -722,15 +861,14 @@ class IssConsoleWindow(Gtk.Window):
             else:
                 lbl_status.get_style_context().add_class("status-badge-tbc")
             r1.pack_end(lbl_status, False, False, 0)
-            card.pack_start(r1, False, False, 0)
+            card_box.pack_start(r1, False, False, 0)
 
             # Row 2: Provider/Pad + Countdown
-            r2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            r2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             col_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             lbl_prov = Gtk.Label(label=f"{item.get('provider', '')} • {item.get('rocket', '')}")
             lbl_prov.set_xalign(0.0)
-            lbl_prov.get_style_context().add_class("reg-value")
-            lbl_prov.get_style_context().add_class("reg-title")
+            lbl_prov.get_style_context().add_class("reg-sub")
             col_info.pack_start(lbl_prov, False, False, 0)
 
             pad_loc = item.get('pad', '')
@@ -752,10 +890,10 @@ class IssConsoleWindow(Gtk.Window):
 
             net_ts = item.get("net_ts", 0)
             self.countdown_items.append((lbl_cd, net_ts))
-            card.pack_start(r2, False, False, 0)
+            card_box.pack_start(r2, False, False, 0)
 
             # Row 3: Scheduled Date + Orbit Tag
-            r3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            r3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             net_str = item.get("net", "")
             lbl_sched = Gtk.Label(label=f"SCHEDULED: {net_str}")
             lbl_sched.set_xalign(0.0)
@@ -768,14 +906,106 @@ class IssConsoleWindow(Gtk.Window):
                 lbl_orb.get_style_context().add_class("reg-sub")
                 r3.pack_end(lbl_orb, False, False, 0)
 
-            card.pack_start(r3, False, False, 0)
+            card_box.pack_start(r3, False, False, 0)
+
+            # Click handler to select launch
+            card.connect("button-press-event", lambda w, e, l=item: self.select_launch(l))
+
             self.launches_container.pack_start(card, False, False, 0)
 
         self.launches_container.show_all()
         self.update_live_countdowns()
+        self.launch_map_area.queue_draw()
+
+    def update_hud_overlay(self):
+        item = self.selected_launch_data
+        if not item:
+            return
+
+        is_fav = item.get("is_favorite", False)
+        self.hud_btn_fav.set_label("★ FAVORITED" if is_fav else "☆ FAVORITE")
+        if is_fav:
+            self.hud_btn_fav.get_style_context().add_class("fav-btn-active")
+        else:
+            self.hud_btn_fav.get_style_context().remove_class("fav-btn-active")
+
+        self.lbl_hud_name.set_text(f"🚀 {item.get('name', 'Unknown Mission')}")
+        status_str = item.get("status", "Unknown")
+        self.lbl_hud_status.set_text(f" {status_str.upper()} ")
+        if "Go" in status_str:
+            self.lbl_hud_status.get_style_context().remove_class("status-badge-tbc")
+            self.lbl_hud_status.get_style_context().add_class("status-badge-go")
+        else:
+            self.lbl_hud_status.get_style_context().remove_class("status-badge-go")
+            self.lbl_hud_status.get_style_context().add_class("status-badge-tbc")
+
+        self.lbl_hud_rocket.set_text(f"{item.get('provider', '')} • {item.get('rocket', '')}")
+        pad_loc = item.get('pad', '')
+        if item.get('location'):
+            pad_loc += f" • {item.get('location')}"
+        self.lbl_hud_pad.set_text(pad_loc)
+
+        plat = item.get("pad_lat")
+        plon = item.get("pad_lon")
+        if plat is not None and plon is not None:
+            lat_d = "N" if float(plat) >= 0 else "S"
+            lon_d = "E" if float(plon) >= 0 else "W"
+            self.lbl_hud_coords.set_text(f"PAD COORDS: {abs(float(plat)):.2f}°{lat_d}  {abs(float(plon)):.2f}°{lon_d}")
+        else:
+            self.lbl_hud_coords.set_text("PAD COORDS: UNLISTED")
+
+        self.lbl_hud_net.set_text(f"SCHEDULED: {item.get('net', '')}")
+
+    def select_launch(self, item):
+        self.selected_launch_id = item.get("id")
+        self.selected_launch_data = item
+        self.update_hud_overlay()
+        self.update_live_countdowns()
+        self.launch_map_area.queue_draw()
+
+        # Update card highlight visually
+        for card_ev in self.launches_container.get_children():
+            card_box = card_ev.get_child() if isinstance(card_ev, Gtk.EventBox) else card_ev
+            if card_box:
+                card_box.get_style_context().remove_class("launch-card-selected")
+
+    def on_hud_toggle_fav(self):
+        if self.selected_launch_id:
+            self.on_toggle_fav(self.selected_launch_id)
+
+    def on_toggle_fav(self, launch_id):
+        if not launch_id:
+            return
+        subprocess.run([TRACKER_BIN, "--toggle-fav", launch_id], check=False)
+        subprocess.run(["space-quindar", "beep"], check=False)
+        self.fetch_telemetry()
 
     def update_live_countdowns(self):
         now = int(time.time())
+        # Update HUD countdown
+        if self.selected_launch_data:
+            net_ts = self.selected_launch_data.get("net_ts", 0)
+            if not net_ts or net_ts <= 0:
+                self.lbl_hud_cd.set_text("T- PENDING")
+            else:
+                diff = net_ts - now
+                if diff < -7200:
+                    self.lbl_hud_cd.set_text("LAUNCHED")
+                elif diff < 0:
+                    abs_d = abs(diff)
+                    m = (abs_d % 3600) // 60
+                    s = abs_d % 60
+                    self.lbl_hud_cd.set_text(f"T+ {m:02d}m {s:02d}s")
+                else:
+                    days = diff // 86400
+                    hours = (diff % 86400) // 3600
+                    mins = (diff % 3600) // 60
+                    secs = diff % 60
+                    if days > 0:
+                        self.lbl_hud_cd.set_text(f"⏱ T- {days}d {hours:02d}h {mins:02d}m {secs:02d}s")
+                    else:
+                        self.lbl_hud_cd.set_text(f"⏱ T- {hours:02d}h {mins:02d}m {secs:02d}s")
+
         for lbl, net_ts in self.countdown_items:
             if not net_ts or net_ts <= 0:
                 lbl.set_text("T- PENDING")
@@ -797,6 +1027,109 @@ class IssConsoleWindow(Gtk.Window):
                     lbl.set_text(f"⏱ T- {days}d {hours:02d}h {mins:02d}m {secs:02d}s")
                 else:
                     lbl.set_text(f"⏱ T- {hours:02d}h {mins:02d}m {secs:02d}s")
+
+    def on_draw_launch_map(self, widget, cr):
+        t = self.theme
+        avail_w = widget.get_allocated_width()
+        avail_h = widget.get_allocated_height()
+
+        cr.set_source_rgb(0.02, 0.03, 0.05)
+        cr.paint()
+
+        target_aspect = 2.0
+        pad = 6.0
+        canvas_w = max(10.0, avail_w - 2 * pad)
+        canvas_h = max(10.0, avail_h - 2 * pad)
+
+        if canvas_w / canvas_h > target_aspect:
+            map_h = canvas_h
+            map_w = map_h * target_aspect
+        else:
+            map_w = canvas_w
+            map_h = map_w / target_aspect
+
+        offset_x = pad + (canvas_w - map_w) / 2.0
+        offset_y = pad + (canvas_h - map_h) / 2.0
+
+        def map_coords(lon, lat):
+            x = offset_x + ((lon + 180.0) / 360.0) * map_w
+            y = offset_y + ((90.0 - lat) / 180.0) * map_h
+            return x, y
+
+        cr.save()
+        cr.rectangle(offset_x, offset_y, map_w, map_h)
+        cr.clip()
+
+        cr.set_source_rgb(t['map_ocean'][0], t['map_ocean'][1], t['map_ocean'][2])
+        cr.rectangle(offset_x, offset_y, map_w, map_h)
+        cr.fill()
+
+        # Grid lines
+        cr.set_source_rgba(t['map_grid'][0], t['map_grid'][1], t['map_grid'][2], 0.25)
+        cr.set_line_width(0.5)
+        for g_lon in range(-180, 181, 30):
+            gx, gy1 = map_coords(g_lon, 90)
+            _, gy2 = map_coords(g_lon, -90)
+            cr.move_to(gx, gy1)
+            cr.line_to(gx, gy2)
+            cr.stroke()
+
+        for g_lat in range(-90, 91, 30):
+            gx1, gy = map_coords(-180, g_lat)
+            gx2, _ = map_coords(180, g_lat)
+            cr.move_to(gx1, gy)
+            cr.line_to(gx2, gy)
+            cr.stroke()
+
+        # Coastlines
+        cr.set_source_rgb(t['map_coast'][0], t['map_coast'][1], t['map_coast'][2])
+        cr.set_line_width(0.85)
+        for poly in self.coastlines:
+            if not poly or len(poly) < 2:
+                continue
+            fx, fy = map_coords(poly[0][0], poly[0][1])
+            cr.move_to(fx, fy)
+            prev_pt = poly[0]
+            for pt in poly[1:]:
+                px, py = map_coords(pt[0], pt[1])
+                if abs(pt[0] - prev_pt[0]) < 180:
+                    cr.line_to(px, py)
+                else:
+                    cr.move_to(px, py)
+                prev_pt = pt
+            cr.stroke()
+
+        # Draw Selected Launch Pad Pin & Pulsing Target Crosshairs
+        item = self.selected_launch_data
+        if item and item.get("pad_lat") is not None and item.get("pad_lon") is not None:
+            plat = float(item["pad_lat"])
+            plon = float(item["pad_lon"])
+            lx, ly = map_coords(plon, plat)
+
+            # Pulsing target ring
+            pulse_r = 7.0 + 3.5 * math.sin(self.pulse_phase)
+            cr.set_source_rgba(1.0, 0.7, 0.0, 0.35)
+            cr.arc(lx, ly, pulse_r, 0, 2 * math.pi)
+            cr.fill()
+
+            # Outer ring
+            cr.set_source_rgb(1.0, 0.7, 0.0)
+            cr.set_line_width(1.3)
+            cr.arc(lx, ly, 7.5, 0, 2 * math.pi)
+            cr.stroke()
+
+            # Crosshairs
+            cr.move_to(lx - 12, ly)
+            cr.line_to(lx + 12, ly)
+            cr.move_to(lx, ly - 12)
+            cr.line_to(lx, ly + 12)
+            cr.stroke()
+
+            # Core pin
+            cr.arc(lx, ly, 3.0, 0, 2 * math.pi)
+            cr.fill()
+
+        cr.restore()
 
     def on_refresh_launches(self, widget):
         self.lbl_footer.set_text("FETCHING UPCOMING LAUNCHES FROM LAUNCH LIBRARY 2...")
