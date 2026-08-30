@@ -19,6 +19,7 @@ import json
 import math
 import time
 import subprocess
+import threading
 import gi
 
 gi.require_version('Gtk', '3.0')
@@ -170,6 +171,8 @@ class IssConsoleWindow(Gtk.Window):
         self.hud_countdown_item = None
         self.last_launches_hash = ""
         self.card_boxes = {}
+        self._fetching = False
+        self.last_cd_sec = -1
 
         self.apply_theme_css()
         self.build_ui()
@@ -190,13 +193,31 @@ class IssConsoleWindow(Gtk.Window):
         return []
 
     def fetch_telemetry(self):
-        try:
-            res = subprocess.run([TRACKER_BIN], capture_output=True, text=True, timeout=5)
-            self.telemetry = json.loads(res.stdout.strip())
-        except Exception:
-            self.telemetry = {"ok": False}
+        if self._fetching:
+            return
+        self._fetching = True
+
+        def _worker():
+            try:
+                res = subprocess.run([TRACKER_BIN], capture_output=True, text=True, timeout=5)
+                data = json.loads(res.stdout.strip())
+            except Exception:
+                data = {"ok": False}
+            GLib.idle_add(self._apply_telemetry, data)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+    def _apply_telemetry(self, data):
+        self._fetching = False
+        self.telemetry = data
         self.update_telemetry_ui()
-        self.map_area.queue_draw()
+        if self.current_tab == "iss":
+            self.map_area.queue_draw()
+        else:
+            if hasattr(self, 'launch_map_area'):
+                self.launch_map_area.queue_draw()
+        return False
 
     def _on_timer_tick(self):
         self.fetch_telemetry()
@@ -1011,58 +1032,68 @@ class IssConsoleWindow(Gtk.Window):
     def on_toggle_fav(self, launch_id):
         if not launch_id:
             return
-        subprocess.run([TRACKER_BIN, "--toggle-fav", launch_id], check=False)
-        subprocess.run(["space-quindar", "beep"], check=False)
-        self.last_launches_hash = "" # force UI refresh
-        self.fetch_telemetry()
+        def _worker():
+            subprocess.run([TRACKER_BIN, "--toggle-fav", launch_id], check=False)
+            subprocess.run(["space-quindar", "beep"], check=False)
+            self.last_launches_hash = "" # force UI refresh
+            self.fetch_telemetry()
+        threading.Thread(target=_worker, daemon=True).start()
 
-    def update_live_countdowns(self):
+    def update_live_countdowns(self, force=False):
         now = int(time.time())
+        if not force and now == self.last_cd_sec:
+            return
+        self.last_cd_sec = now
+
+        def _safe_set(lbl, txt):
+            if lbl and lbl.get_text() != txt:
+                lbl.set_text(txt)
+
         # Update HUD countdown
         if self.selected_launch_data:
             net_ts = self.selected_launch_data.get("net_ts", 0)
             if not net_ts or net_ts <= 0:
-                self.lbl_hud_cd.set_text("T- PENDING")
+                _safe_set(self.lbl_hud_cd, "T- PENDING")
             else:
                 diff = net_ts - now
                 if diff < -7200:
-                    self.lbl_hud_cd.set_text("LAUNCHED")
+                    _safe_set(self.lbl_hud_cd, "LAUNCHED")
                 elif diff < 0:
                     abs_d = abs(diff)
                     m = (abs_d % 3600) // 60
                     s = abs_d % 60
-                    self.lbl_hud_cd.set_text(f"T+ {m:02d}m {s:02d}s")
+                    _safe_set(self.lbl_hud_cd, f"T+ {m:02d}m {s:02d}s")
                 else:
                     days = diff // 86400
                     hours = (diff % 86400) // 3600
                     mins = (diff % 3600) // 60
                     secs = diff % 60
                     if days > 0:
-                        self.lbl_hud_cd.set_text(f"⏱ T- {days}d {hours:02d}h {mins:02d}m {secs:02d}s")
+                        _safe_set(self.lbl_hud_cd, f"⏱ T- {days}d {hours:02d}h {mins:02d}m {secs:02d}s")
                     else:
-                        self.lbl_hud_cd.set_text(f"⏱ T- {hours:02d}h {mins:02d}m {secs:02d}s")
+                        _safe_set(self.lbl_hud_cd, f"⏱ T- {hours:02d}h {mins:02d}m {secs:02d}s")
 
         for lbl, net_ts in self.countdown_items:
             if not net_ts or net_ts <= 0:
-                lbl.set_text("T- PENDING")
+                _safe_set(lbl, "T- PENDING")
                 continue
             diff = net_ts - now
             if diff < -7200:
-                lbl.set_text("LAUNCHED")
+                _safe_set(lbl, "LAUNCHED")
             elif diff < 0:
                 abs_d = abs(diff)
                 m = (abs_d % 3600) // 60
                 s = abs_d % 60
-                lbl.set_text(f"T+ {m:02d}m {s:02d}s")
+                _safe_set(lbl, f"T+ {m:02d}m {s:02d}s")
             else:
                 days = diff // 86400
                 hours = (diff % 86400) // 3600
                 mins = (diff % 3600) // 60
                 secs = diff % 60
                 if days > 0:
-                    lbl.set_text(f"⏱ T- {days}d {hours:02d}h {mins:02d}m {secs:02d}s")
+                    _safe_set(lbl, f"⏱ T- {days}d {hours:02d}h {mins:02d}m {secs:02d}s")
                 else:
-                    lbl.set_text(f"⏱ T- {hours:02d}h {mins:02d}m {secs:02d}s")
+                    _safe_set(lbl, f"⏱ T- {hours:02d}h {mins:02d}m {secs:02d}s")
 
     def on_draw_launch_map(self, widget, cr):
         t = self.theme
@@ -1094,11 +1125,16 @@ class IssConsoleWindow(Gtk.Window):
 
         cr.save()
         cr.rectangle(offset_x, offset_y, map_w, map_h)
-        cr.clip()
+        cr.set_source_rgb(0.04, 0.06, 0.09)
+        cr.fill_preserve()
+        cr.set_source_rgba(0.2, 0.3, 0.45, 0.8)
+        cr.set_line_width(1.0)
+        cr.stroke()
+        cr.restore()
 
-        cr.set_source_rgb(t['map_ocean'][0], t['map_ocean'][1], t['map_ocean'][2])
+        cr.save()
         cr.rectangle(offset_x, offset_y, map_w, map_h)
-        cr.fill()
+        cr.clip()
 
         # Grid lines
         cr.set_source_rgba(t['map_grid'][0], t['map_grid'][1], t['map_grid'][2], 0.25)
@@ -1169,11 +1205,12 @@ class IssConsoleWindow(Gtk.Window):
 
     def on_refresh_launches(self, widget):
         self.lbl_footer.set_text("FETCHING UPCOMING LAUNCHES FROM LAUNCH LIBRARY 2...")
-        subprocess.run([TRACKER_BIN, "--fetch-launches"], check=False)
-        subprocess.run(["space-quindar", "beep"], check=False)
-        self.fetch_telemetry()
-
-
+        def _worker():
+            subprocess.run([TRACKER_BIN, "--fetch-launches"], check=False)
+            subprocess.run(["space-quindar", "beep"], check=False)
+            self.last_launches_hash = ""
+            self.fetch_telemetry()
+        threading.Thread(target=_worker, daemon=True).start()
 
     def on_draw_map(self, widget, cr):
         t = self.theme
@@ -1338,21 +1375,27 @@ class IssConsoleWindow(Gtk.Window):
         city = self.entry_city.get_text().strip()
         if city:
             self.lbl_footer.set_text(f"GEOCODING: '{city}'...")
-            subprocess.run([TRACKER_BIN, "--set-city", city], check=False)
-            subprocess.run(["space-quindar", "outro"], check=False)
             self.entry_city.set_text("")
-            self.fetch_telemetry()
+            def _worker():
+                subprocess.run([TRACKER_BIN, "--set-city", city], check=False)
+                subprocess.run(["space-quindar", "outro"], check=False)
+                self.fetch_telemetry()
+            threading.Thread(target=_worker, daemon=True).start()
 
     def on_clear_city(self, widget):
-        subprocess.run([TRACKER_BIN, "--clear-city"], check=False)
-        subprocess.run(["space-quindar", "beep"], check=False)
-        self.fetch_telemetry()
+        def _worker():
+            subprocess.run([TRACKER_BIN, "--clear-city"], check=False)
+            subprocess.run(["space-quindar", "beep"], check=False)
+            self.fetch_telemetry()
+        threading.Thread(target=_worker, daemon=True).start()
 
     def on_refresh_tle(self, widget):
         self.lbl_footer.set_text("UPDATING TLE FROM CELESTRAK...")
-        subprocess.run([TRACKER_BIN, "--fetch-tle"], check=False)
-        subprocess.run(["space-quindar", "beep"], check=False)
-        self.fetch_telemetry()
+        def _worker():
+            subprocess.run([TRACKER_BIN, "--fetch-tle"], check=False)
+            subprocess.run(["space-quindar", "beep"], check=False)
+            self.fetch_telemetry()
+        threading.Thread(target=_worker, daemon=True).start()
 
     def on_key_press(self, widget, event):
         if event.keyval in [Gdk.KEY_Escape, Gdk.KEY_q, Gdk.KEY_Q]:

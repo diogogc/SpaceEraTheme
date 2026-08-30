@@ -11,15 +11,15 @@ It is not a landing page. It is the cockpit.
 - Apollo-inspired system telemetry plugin with console-style needle gauges (CPU, MEM, VRAM, TMP).
 - Apollo DSKY AGC Calculator (`spaceera.dsky`) with math evaluation, register displays, and multi-unit conversions (time, data, bases, velocity).
 - Flight Director Mission Timeline & Pomodoro Engine (`spaceera.timeline`) with Mission Elapsed Time (MET), T-Minus event countdowns, and propulsion burn focus sessions.
-- Live ISS tracker plugin with:
+- Live ISS tracker & 7-Day Space Launch Manifest plugin with:
   - real coastline map data
-  - live ISS marker
-  - white orbit path
-  - blue visibility footprint
-  - configurable user city
-  - user-location marker
-  - next pass countdown and duration
+  - live ISS marker & 19-node ground track projection
+  - white orbit path & blue visibility footprint
+  - configurable user city with pass predictions and optical flare sightings
   - flashing `ACQUIRED` bar state when the ISS is in range
+  - 7-day upcoming space launch manifest (Launch Library 2)
+  - interactive launch pad coordinate targeting with glowing crosshairs
+  - live mission HUD with T-minus countdown ticker and favorite bookmarks (`★`)
 - High-resolution NASA Mission Control background.
 
 ## Screenshots
